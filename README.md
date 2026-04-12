@@ -19,7 +19,7 @@
 ## Installation
 
 ```bash
-go get ella.to/blob@v0.0.1
+go get ella.to/blob@v0.0.2
 ```
 
 ## Overview
