@@ -491,3 +491,10 @@ func TestLocalStorage_LegacyLayout(t *testing.T) {
 	_, err = storage.Get(ctx, fresh)
 	require.ErrorIs(t, err, blob.ErrNotFound)
 }
+
+func TestLocalStorage_PutEmptyError(t *testing.T) {
+	storage := NewStorage(WithPath(t.TempDir()))
+
+	_, _, err := storage.Put(context.Background(), bytes.NewReader(nil))
+	require.Equal(t, io.EOF, err)
+}

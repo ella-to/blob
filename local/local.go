@@ -58,8 +58,9 @@ func (s *Storage) Put(ctx context.Context, r io.Reader) (ref hash.Hash, n int64,
 	}
 
 	defer func() {
-		closeErr := out.Close()
-		err = errors.Join(err, closeErr)
+		if closeErr := out.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
 
 		if err == nil {
 			renameErr := s.ensureDir(ref)
@@ -71,8 +72,9 @@ func (s *Storage) Put(ctx context.Context, r io.Reader) (ref hash.Hash, n int64,
 				return
 			}
 		} else {
-			removeErr := os.Remove(out.Name())
-			err = errors.Join(err, removeErr)
+			if removeErr := os.Remove(out.Name()); removeErr != nil {
+				err = errors.Join(err, removeErr)
+			}
 		}
 	}()
 
@@ -93,7 +95,6 @@ func (s *Storage) Put(ctx context.Context, r io.Reader) (ref hash.Hash, n int64,
 	if err != nil {
 		return nil, n, err
 	} else if n == 0 {
-		defer os.Remove(out.Name())
 		return nil, n, io.EOF
 	}
 
