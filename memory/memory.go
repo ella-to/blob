@@ -18,9 +18,10 @@ type Storage struct {
 }
 
 var (
-	_ blob.Putter = (*Storage)(nil)
-	_ blob.Getter = (*Storage)(nil)
-	_ blob.Lister = (*Storage)(nil)
+	_ blob.Putter  = (*Storage)(nil)
+	_ blob.Getter  = (*Storage)(nil)
+	_ blob.Lister  = (*Storage)(nil)
+	_ blob.Deleter = (*Storage)(nil)
 )
 
 func (s *Storage) Put(ctx context.Context, r io.Reader) (hash.Hash, int64, error) {
@@ -51,6 +52,14 @@ func (s *Storage) Get(ctx context.Context, r hash.Hash) (rc io.ReadCloser, err e
 	}
 
 	return io.NopCloser(bytes.NewReader(b)), nil
+}
+
+func (s *Storage) Delete(ctx context.Context, r hash.Hash) error {
+	s.mu.Lock()
+	delete(s.mapper, string(r))
+	s.mu.Unlock()
+
+	return nil
 }
 
 func (s *Storage) List(ctx context.Context) iter.Seq2[hash.Hash, error] {

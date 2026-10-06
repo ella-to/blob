@@ -404,3 +404,17 @@ func TestLocalStorage_ListEarlyBreak(t *testing.T) {
 	}
 	require.LessOrEqual(t, runtime.NumGoroutine(), before)
 }
+
+func TestLocalStorage_Delete(t *testing.T) {
+	storage := NewStorage(WithPath(t.TempDir()))
+	ctx := context.Background()
+
+	ref, _, err := storage.Put(ctx, bytes.NewReader([]byte("hello")))
+	require.NoError(t, err)
+
+	require.NoError(t, storage.Delete(ctx, ref))
+	_, err = storage.Get(ctx, ref)
+	require.ErrorIs(t, err, blob.ErrNotFound)
+
+	require.NoError(t, storage.Delete(ctx, ref))
+}

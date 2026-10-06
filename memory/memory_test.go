@@ -254,3 +254,17 @@ func TestMemoryStorage_ContextCancellation(t *testing.T) {
 		}
 	})
 }
+
+func TestMemoryStorage_Delete(t *testing.T) {
+	storage := New()
+	ctx := context.Background()
+
+	ref, _, err := storage.Put(ctx, bytes.NewReader([]byte("hello")))
+	require.NoError(t, err)
+
+	require.NoError(t, storage.Delete(ctx, ref))
+	_, err = storage.Get(ctx, ref)
+	require.ErrorIs(t, err, blob.ErrNotFound)
+
+	require.NoError(t, storage.Delete(ctx, ref))
+}

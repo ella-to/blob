@@ -25,6 +25,11 @@ type Lister interface {
 	List(ctx context.Context) iter.Seq2[Ref, error]
 }
 
+// Deleter removes a blob. Deleting a blob that doesn't exist is not an error.
+type Deleter interface {
+	Delete(ctx context.Context, ref Ref) error
+}
+
 type Verifier interface {
 	Verify(ctx context.Context, ref Ref) error
 }
