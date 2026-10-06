@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 	"testing/iotest"
@@ -371,4 +372,35 @@ func TestLocalStorage_EncryptedShortReads(t *testing.T) {
 	got, err := io.ReadAll(rc)
 	require.NoError(t, err)
 	require.Equal(t, data, got)
+}
+
+func TestLocalStorage_ListEarlyBreak(t *testing.T) {
+	storage := NewStorage(WithPath(t.TempDir()))
+	ctx := context.Background()
+
+	for i := range 50 {
+		_, _, err := storage.Put(ctx, bytes.NewReader([]byte{byte(i)}))
+		require.NoError(t, err)
+	}
+
+	// an in-flight Put leaves a temp file behind, which is not a blob
+	tmp, err := os.CreateTemp(storage.path, tmpPrefix+"*")
+	require.NoError(t, err)
+	require.NoError(t, tmp.Close())
+
+	count := 0
+	for ref, err := range storage.List(ctx) {
+		require.NoError(t, err)
+		require.NotNil(t, ref)
+		count++
+	}
+	require.Equal(t, 50, count)
+
+	before := runtime.NumGoroutine()
+	for range 100 {
+		for range storage.List(ctx) {
+			break
+		}
+	}
+	require.LessOrEqual(t, runtime.NumGoroutine(), before)
 }

@@ -9,6 +9,7 @@ import (
 	"iter"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"ella.to/blob"
 	"ella.to/crypto"
@@ -20,7 +21,10 @@ type Storage struct {
 	key  []byte
 }
 
-const defaultCryptoBlockSize = 1024
+const (
+	defaultCryptoBlockSize = 1024
+	tmpPrefix              = "tmp-"
+)
 
 var (
 	_ blob.Putter = (*Storage)(nil)
@@ -29,7 +33,7 @@ var (
 )
 
 func (s *Storage) Put(ctx context.Context, r io.Reader) (ref hash.Hash, n int64, err error) {
-	out, err := os.CreateTemp(s.path, "tmp-*")
+	out, err := os.CreateTemp(s.path, tmpPrefix+"*")
 	if err != nil {
 		return nil, 0, err
 	}
@@ -105,58 +109,29 @@ func (s *Storage) Get(ctx context.Context, r hash.Hash) (rc io.ReadCloser, err e
 }
 
 func (s *Storage) List(ctx context.Context) iter.Seq2[hash.Hash, error] {
-	type fileRef struct {
-		blob hash.Hash
-		err  error
-	}
-
-	files := make(chan *fileRef, 10)
-
-	go func() {
-		defer close(files)
-
-		_ = filepath.WalkDir(s.path, func(path string, d os.DirEntry, err error) error {
+	return func(yield func(hash.Hash, error) bool) {
+		err := filepath.WalkDir(s.path, func(path string, d os.DirEntry, err error) error {
 			if err != nil {
-				files <- &fileRef{blob: nil, err: err}
 				return err
 			}
 
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
+			if err := ctx.Err(); err != nil {
+				return err
 			}
 
-			if d.IsDir() {
+			if d.IsDir() || strings.HasPrefix(d.Name(), tmpPrefix) {
 				return nil
 			}
 
 			r, err := hash.ParseFromString(d.Name())
-			if err != nil {
-				files <- &fileRef{blob: nil, err: err}
-				return nil
+			if !yield(r, err) {
+				return filepath.SkipAll
 			}
 
-			files <- &fileRef{blob: r, err: nil}
 			return nil
 		})
-	}()
-
-	return func(yield func(hash.Hash, error) bool) {
-		for {
-			select {
-			case <-ctx.Done():
-				yield(nil, ctx.Err())
-				return
-			case f, ok := <-files:
-				if !ok {
-					return
-				}
-
-				if !yield(f.blob, f.err) {
-					return
-				}
-			}
+		if err != nil {
+			yield(nil, err)
 		}
 	}
 }
