@@ -115,18 +115,16 @@ func (m *Storage) Put(ctx context.Context, r io.Reader) (blob.Ref, int64, error)
 }
 
 func (m *Storage) Get(ctx context.Context, r blob.Ref) (rc io.ReadCloser, err error) {
-	pr, pw := io.Pipe()
+	node, data, err := m.open(ctx, r)
+	if err != nil {
+		return nil, err
+	}
 
-	go func() {
-		err := m.getHelper(ctx, r, pw)
-		if err != nil {
-			pw.CloseWithError(err)
-		} else {
-			pw.Close()
-		}
-	}()
+	if data != nil {
+		return data, nil
+	}
 
-	return pr, nil
+	return &treeReader{ctx: ctx, m: m, stack: [][]blob.Ref{node.Children}}, nil
 }
 
 func (m *Storage) ListRootNodes(ctx context.Context) iter.Seq2[blob.Ref, error] {
@@ -208,15 +206,15 @@ func (m *Storage) ListRootChildrenNodes(ctx context.Context, ref blob.Ref, dataO
 }
 
 func (m *Storage) Verify(ctx context.Context, id blob.Ref) error {
-	node, err := m.isValidMerkleNode(ctx, id)
+	node, data, err := m.open(ctx, id)
 	if err != nil {
-		r, err := m.storage.Get(ctx, id)
-		if err != nil {
-			return err
-		}
-		defer r.Close()
+		return err
+	}
 
-		refValue, err := hash.FromReader(r)
+	if data != nil {
+		defer data.Close()
+
+		refValue, err := hash.FromReader(data)
 		if err != nil {
 			return err
 		}
@@ -237,57 +235,18 @@ func (m *Storage) Verify(ctx context.Context, id blob.Ref) error {
 	return nil
 }
 
-func (m *Storage) isValidMerkleNode(ctx context.Context, ref blob.Ref) (node *Node, err error) {
-	r, err := m.storage.Get(ctx, ref)
+func (m *Storage) isValidMerkleNode(ctx context.Context, ref blob.Ref) (*Node, error) {
+	node, data, err := m.open(ctx, ref)
 	if err != nil {
 		return nil, err
 	}
-	defer r.Close()
 
-	node, err = ParseNode(r)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w:%s", ErrNotNode, err, ref)
-	}
-
-	if !node.Validate(ctx, m.publicKey) {
-		return nil, fmt.Errorf("%w: %s", ErrInvalidNode, ref)
+	if data != nil {
+		_ = data.Close()
+		return nil, fmt.Errorf("%w: %s", ErrNotNode, ref)
 	}
 
 	return node, nil
-}
-
-func (m *Storage) getHelper(ctx context.Context, r blob.Ref, w io.Writer) error {
-	var isData bool
-
-	node, err := m.isValidMerkleNode(ctx, r)
-	if errors.Is(err, ErrInvalidNode) {
-		return err
-	} else if err != nil {
-		isData = true
-	}
-
-	if isData {
-		chunk, err := m.storage.Get(ctx, r)
-		if err != nil {
-			return err
-		}
-		defer chunk.Close()
-
-		_, err = io.Copy(w, chunk)
-		if err != nil {
-			return err
-		}
-
-		return nil
-	} else {
-		for _, child := range node.Children {
-			if err := m.getHelper(ctx, child, w); err != nil {
-				return err
-			}
-		}
-	}
-
-	return nil
 }
 
 type merkleOpt interface {
