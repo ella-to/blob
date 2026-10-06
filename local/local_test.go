@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"testing/iotest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -349,4 +350,25 @@ func TestLocalStorage_EncryptedPutGet(t *testing.T) {
 	decryptedData, err := io.ReadAll(rc)
 	require.NoError(t, err)
 	assert.Equal(t, testData, decryptedData)
+}
+
+func TestLocalStorage_EncryptedShortReads(t *testing.T) {
+	storage := NewStorage(WithPath(t.TempDir()), WithKey("secret"))
+	ctx := context.Background()
+
+	data := bytes.Repeat([]byte("0123456789"), 1000)
+
+	// readers such as network connections return short reads, which must not
+	// change how the encrypted stream is framed
+	ref, n, err := storage.Put(ctx, iotest.HalfReader(bytes.NewReader(data)))
+	require.NoError(t, err)
+	require.Equal(t, int64(len(data)), n)
+
+	rc, err := storage.Get(ctx, ref)
+	require.NoError(t, err)
+	defer rc.Close()
+
+	got, err := io.ReadAll(rc)
+	require.NoError(t, err)
+	require.Equal(t, data, got)
 }

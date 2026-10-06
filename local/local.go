@@ -55,7 +55,7 @@ func (s *Storage) Put(ctx context.Context, r io.Reader) (ref hash.Hash, n int64,
 	hr, getRef := hash.FromTeeReader(r)
 
 	if len(s.key) > 0 {
-		n, err = crypto.EncryptStream(s.cryptoKey(), defaultCryptoBlockSize, bw, hr)
+		n, err = crypto.EncryptStream(s.cryptoKey(), defaultCryptoBlockSize, bw, fullReader{hr})
 	} else {
 		n, err = io.Copy(bw, hr)
 	}
@@ -92,7 +92,7 @@ func (s *Storage) Get(ctx context.Context, r hash.Hash) (rc io.ReadCloser, err e
 
 	pr, pw := io.Pipe()
 	go func() {
-		_, decErr := crypto.DecryptStream(s.cryptoKey(), defaultCryptoBlockSize, pw, file)
+		_, decErr := crypto.DecryptStream(s.cryptoKey(), defaultCryptoBlockSize, pw, fullReader{file})
 		_ = file.Close()
 		if decErr != nil {
 			_ = pw.CloseWithError(decErr)
@@ -185,4 +185,19 @@ func (s *Storage) cryptoKey() [32]byte {
 	var key [32]byte
 	copy(key[:], s.key)
 	return key
+}
+
+// fullReader fills the whole buffer on every Read unless the underlying
+// reader is exhausted. Encrypted blobs are framed in fixed size blocks, so a
+// short read would otherwise produce a block boundary that can't be decrypted.
+type fullReader struct {
+	r io.Reader
+}
+
+func (f fullReader) Read(p []byte) (int, error) {
+	n, err := io.ReadFull(f.r, p)
+	if errors.Is(err, io.ErrUnexpectedEOF) {
+		err = nil
+	}
+	return n, err
 }
