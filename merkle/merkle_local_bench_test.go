@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"fmt"
 	"io"
 	"testing"
 
@@ -87,5 +88,39 @@ func BenchmarkMerkleLocal(b *testing.B) {
 				}
 			}
 		})
+	}
+}
+
+func BenchmarkMerkleLocal_PutConcurrency(b *testing.B) {
+	pub, priv := getTestKeysBench(b)
+
+	data := make([]byte, 64*1024*1024)
+	_, _ = rand.Read(data)
+
+	for _, encrypted := range []bool{false, true} {
+		for _, c := range []int{1, 2, 4, 8} {
+			b.Run(fmt.Sprintf("encrypted=%v/c=%d", encrypted, c), func(b *testing.B) {
+				opts := []func(*local.Storage){local.WithPath(b.TempDir())}
+				if encrypted {
+					opts = append(opts, local.WithKey("secret"))
+				}
+
+				m, err := New(
+					WithStorage(local.NewStorage(opts...)),
+					WithChunckSize(1*1024*1024),
+					WithKeys(pub, priv),
+					WithConcurrency(c),
+				)
+				require.NoError(b, err)
+				ctx := context.Background()
+
+				b.SetBytes(int64(len(data)))
+				for b.Loop() {
+					if _, _, err := m.Put(ctx, bytes.NewReader(data)); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+		}
 	}
 }

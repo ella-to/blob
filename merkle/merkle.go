@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"iter"
+	"sync"
 
 	"ella.to/blob"
 	"ella.to/crypto"
@@ -31,6 +32,8 @@ type Storage struct {
 	privateKey   *crypto.PrivateKey
 	childrenSize int
 	chunckSize   int64
+	concurrency  int
+	chunks       sync.Pool
 }
 
 var (
@@ -40,21 +43,9 @@ var (
 )
 
 func (m *Storage) Put(ctx context.Context, r io.Reader) (blob.Ref, int64, error) {
-	var totalSize int64
-
-	refs := make([]blob.Ref, 0)
-
-	// save all data nodes
-	for {
-		ref, n, err := m.storage.Put(ctx, io.LimitReader(r, m.chunckSize))
-		if errors.Is(err, io.EOF) || n == 0 {
-			break
-		} else if err != nil {
-			return nil, totalSize, err
-		}
-
-		totalSize += n
-		refs = append(refs, ref)
+	refs, totalSize, err := m.putChunks(ctx, r)
+	if err != nil {
+		return nil, totalSize, err
 	}
 
 	if len(refs) == 0 {
@@ -75,43 +66,80 @@ func (m *Storage) Put(ctx context.Context, r io.Reader) (blob.Ref, int64, error)
 		}
 	}
 
-	var root blob.Ref
-
 	// need to run this loop for all levels to calculate the root hash
 	for i := 0; i < levels; i++ {
 		isRoot := i+1 == levels
 
-		nodes := make([]*Node, 0)
+		b := newBatch(ctx, m.storage, m.concurrency)
 
 		for j := 0; j < len(refs); j += m.childrenSize {
-			start := j
-			end := start + m.childrenSize
-			if end > len(refs) {
-				end = len(refs)
+			node := &Node{
+				IsRoot:   isRoot,
+				Children: refs[j:min(j+m.childrenSize, len(refs))],
 			}
 
-			node := &Node{}
-			node.Children = refs[start:end]
-			nodes = append(nodes, node)
+			b.put(func() io.Reader { return SignNodeReader(node, m.privateKey) }, nil)
 		}
 
-		refs = make([]blob.Ref, 0)
-		for _, node := range nodes {
-			node.IsRoot = isRoot
-			ref, _, err := m.storage.Put(ctx, SignNodeReader(node, m.privateKey))
-			if err != nil {
-				return nil, totalSize, err
-			}
-
-			refs = append(refs, ref)
-		}
-
-		if isRoot {
-			root = refs[0]
+		if refs, err = b.wait(); err != nil {
+			return nil, totalSize, err
 		}
 	}
 
-	return root, totalSize, nil
+	return refs[0], totalSize, nil
+}
+
+// putChunks splits r into chunks and stores them. With concurrency > 1,
+// chunks are buffered so that reading the next chunk overlaps with writing
+// the previous ones.
+func (m *Storage) putChunks(ctx context.Context, r io.Reader) ([]blob.Ref, int64, error) {
+	var totalSize int64
+
+	if m.concurrency <= 1 {
+		refs := make([]blob.Ref, 0)
+		for {
+			ref, n, err := m.storage.Put(ctx, io.LimitReader(r, m.chunckSize))
+			if errors.Is(err, io.EOF) || n == 0 {
+				return refs, totalSize, nil
+			} else if err != nil {
+				return nil, totalSize, err
+			}
+
+			totalSize += n
+			refs = append(refs, ref)
+		}
+	}
+
+	b := newBatch(ctx, m.storage, m.concurrency)
+
+	for !b.failed() {
+		buf := m.chunks.Get().(*[]byte)
+
+		n, err := io.ReadFull(r, *buf)
+		if n > 0 {
+			totalSize += int64(n)
+			b.put(
+				func() io.Reader { return bytes.NewReader((*buf)[:n]) },
+				func() { m.chunks.Put(buf) },
+			)
+		} else {
+			m.chunks.Put(buf)
+		}
+
+		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+			break
+		} else if err != nil {
+			_, _ = b.wait()
+			return nil, totalSize, err
+		}
+	}
+
+	refs, err := b.wait()
+	if err != nil {
+		return nil, totalSize, err
+	}
+
+	return refs, totalSize, nil
 }
 
 func (m *Storage) Get(ctx context.Context, r blob.Ref) (rc io.ReadCloser, err error) {
@@ -291,6 +319,15 @@ func WithChunckSize(size int64) merkleOptFn {
 	}
 }
 
+// WithConcurrency sets how many chunks and nodes are written in parallel by
+// Put. Values above 1 buffer up to that many chunks in memory.
+func WithConcurrency(n int) merkleOptFn {
+	return func(opts *Storage) error {
+		opts.concurrency = n
+		return nil
+	}
+}
+
 func New(optsFn ...merkleOpt) (*Storage, error) {
 	storage := &Storage{
 		childrenSize: DefaultChildrenSize,
@@ -305,6 +342,11 @@ func New(optsFn ...merkleOpt) (*Storage, error) {
 
 	if storage.storage == nil {
 		return nil, errors.New("storage is required")
+	}
+
+	storage.chunks.New = func() any {
+		buf := make([]byte, storage.chunckSize)
+		return &buf
 	}
 
 	return storage, nil
