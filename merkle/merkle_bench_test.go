@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"io"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -114,6 +115,9 @@ func BenchmarkMerkleStorage_Get(b *testing.B) {
 			for b.Loop() {
 				rc, err := merkleStorage.Get(ctx, ref)
 				if err != nil {
+					b.Fatal(err)
+				}
+				if _, err := io.Copy(io.Discard, rc); err != nil {
 					b.Fatal(err)
 				}
 				rc.Close()

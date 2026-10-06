@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"io"
 	"os"
 	"testing"
 )
@@ -74,6 +75,9 @@ func BenchmarkLocalStorage_Get(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				rc, err := storage.Get(ctx, ref)
 				if err != nil {
+					b.Fatal(err)
+				}
+				if _, err := io.Copy(io.Discard, rc); err != nil {
 					b.Fatal(err)
 				}
 				rc.Close()
@@ -170,6 +174,9 @@ func BenchmarkLocalStorage_ConcurrentGet(b *testing.B) {
 			if err != nil {
 				b.Fatal(err)
 			}
+			if _, err := io.Copy(io.Discard, rc); err != nil {
+				b.Fatal(err)
+			}
 			rc.Close()
 		}
 	})
@@ -196,4 +203,55 @@ func BenchmarkLocalStorage_FileSystemOverhead(b *testing.B) {
 			}
 		}
 	})
+}
+
+// Benchmark Put/Get with encryption at rest enabled
+func BenchmarkLocalStorage_Encrypted(b *testing.B) {
+	sizes := []struct {
+		name string
+		size int
+	}{
+		{"1KB", 1 * 1024},
+		{"1MB", 1 * 1024 * 1024},
+		{"10MB", 10 * 1024 * 1024},
+	}
+
+	for _, s := range sizes {
+		data := make([]byte, s.size)
+		_, _ = rand.Read(data)
+
+		b.Run("Put/"+s.name, func(b *testing.B) {
+			storage := NewStorage(WithPath(b.TempDir()), WithKey("secret"))
+			ctx := context.Background()
+
+			b.SetBytes(int64(s.size))
+			for b.Loop() {
+				if _, _, err := storage.Put(ctx, bytes.NewReader(data)); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+
+		b.Run("Get/"+s.name, func(b *testing.B) {
+			storage := NewStorage(WithPath(b.TempDir()), WithKey("secret"))
+			ctx := context.Background()
+
+			ref, _, err := storage.Put(ctx, bytes.NewReader(data))
+			if err != nil {
+				b.Fatal(err)
+			}
+
+			b.SetBytes(int64(s.size))
+			for b.Loop() {
+				rc, err := storage.Get(ctx, ref)
+				if err != nil {
+					b.Fatal(err)
+				}
+				if _, err := io.Copy(io.Discard, rc); err != nil {
+					b.Fatal(err)
+				}
+				rc.Close()
+			}
+		})
+	}
 }
