@@ -40,6 +40,10 @@ const (
 	ioBufferSize           = 64 * 1024
 )
 
+var writers = sync.Pool{
+	New: func() any { return bufio.NewWriterSize(nil, ioBufferSize) },
+}
+
 var (
 	_ blob.Putter  = (*Storage)(nil)
 	_ blob.Getter  = (*Storage)(nil)
@@ -73,13 +77,18 @@ func (s *Storage) Put(ctx context.Context, r io.Reader) (ref hash.Hash, n int64,
 	}()
 
 	// Use buffered writer for better performance
-	bw := bufio.NewWriterSize(out, ioBufferSize)
+	bw := writers.Get().(*bufio.Writer)
+	bw.Reset(out)
+	defer func() {
+		bw.Reset(nil)
+		writers.Put(bw)
+	}()
 	hr, getRef := hash.FromTeeReader(r)
 
 	if len(s.key) > 0 {
 		n, err = crypto.EncryptStream(s.cryptoKey(), defaultCryptoBlockSize, bw, fullReader{hr})
 	} else {
-		n, err = io.Copy(bw, hr)
+		n, err = copyBuffered(bw, hr)
 	}
 	if err != nil {
 		return nil, n, err
@@ -276,6 +285,33 @@ func (s *Storage) cryptoKey() [32]byte {
 	var key [32]byte
 	copy(key[:], s.key)
 	return key
+}
+
+// copyBuffered reads straight into the free space of bw. bufio.Writer's
+// ReadFrom hands the copy to the file when its buffer is empty, and the file
+// then allocates a buffer of its own on every call.
+func copyBuffered(bw *bufio.Writer, r io.Reader) (int64, error) {
+	var total int64
+	for {
+		if bw.Available() == 0 {
+			if err := bw.Flush(); err != nil {
+				return total, err
+			}
+		}
+
+		buf := bw.AvailableBuffer()[:bw.Available()]
+		n, err := r.Read(buf)
+		if n > 0 {
+			_, _ = bw.Write(buf[:n]) // fits, so it only advances the buffer
+			total += int64(n)
+		}
+
+		if errors.Is(err, io.EOF) {
+			return total, nil
+		} else if err != nil {
+			return total, err
+		}
+	}
 }
 
 // fullReader fills the whole buffer on every Read unless the underlying
