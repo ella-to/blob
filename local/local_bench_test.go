@@ -7,6 +7,8 @@ import (
 	"io"
 	"os"
 	"testing"
+
+	"ella.to/hash"
 )
 
 // Benchmark Put operations with different data sizes
@@ -254,4 +256,57 @@ func BenchmarkLocalStorage_Encrypted(b *testing.B) {
 			}
 		})
 	}
+}
+
+// Benchmark Get/Put on a directory that already holds many blobs
+func BenchmarkLocalStorage_ManyFiles(b *testing.B) {
+	const count = 50_000
+
+	storage := NewStorage(WithPath(b.TempDir()))
+	ctx := context.Background()
+
+	refs := make([]hash.Hash, count)
+	for i := range refs {
+		data := make([]byte, 64)
+		_, _ = rand.Read(data)
+		ref, _, err := storage.Put(ctx, bytes.NewReader(data))
+		if err != nil {
+			b.Fatal(err)
+		}
+		refs[i] = ref
+	}
+
+	b.Run("Get", func(b *testing.B) {
+		i := 0
+		for b.Loop() {
+			rc, err := storage.Get(ctx, refs[(i*7919)%count])
+			if err != nil {
+				b.Fatal(err)
+			}
+			if _, err := io.Copy(io.Discard, rc); err != nil {
+				b.Fatal(err)
+			}
+			rc.Close()
+			i++
+		}
+	})
+
+	b.Run("Put", func(b *testing.B) {
+		data := make([]byte, 64)
+		for b.Loop() {
+			_, _ = rand.Read(data)
+			if _, _, err := storage.Put(ctx, bytes.NewReader(data)); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+
+	b.Run("Stat-miss", func(b *testing.B) {
+		missing := hash.FromBytes([]byte("missing"))
+		for b.Loop() {
+			if _, err := storage.Get(ctx, missing); err == nil {
+				b.Fatal("expected not found")
+			}
+		}
+	})
 }

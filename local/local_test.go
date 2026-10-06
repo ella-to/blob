@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"ella.to/blob"
+	"ella.to/hash"
 )
 
 func TestLocalStorage_Put(t *testing.T) {
@@ -72,7 +73,7 @@ func TestLocalStorage_Put(t *testing.T) {
 				assert.Equal(t, int64(len(tt.data)), size)
 
 				// Verify file was created with correct name
-				filePath := filepath.Join(tmpDir, ref.String())
+				filePath := filepath.Join(tmpDir, ref.String()[7:9], ref.String())
 				_, err := os.Stat(filePath)
 				assert.NoError(t, err, "file should exist")
 			}
@@ -175,15 +176,14 @@ func TestLocalStorage_PutIdempotent(t *testing.T) {
 	assert.Equal(t, size1, size2)
 
 	// Should only have one file
-	files, err := os.ReadDir(tmpDir)
-	require.NoError(t, err)
-
 	actualFiles := 0
-	for _, f := range files {
-		if !f.IsDir() {
+	err := filepath.WalkDir(tmpDir, func(path string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
 			actualFiles++
 		}
-	}
+		return err
+	})
+	require.NoError(t, err)
 	assert.Equal(t, 1, actualFiles, "should only have one file stored")
 }
 
@@ -316,7 +316,7 @@ func TestLocalStorage_FileIntegrity(t *testing.T) {
 	require.NoError(t, err)
 
 	// Read file content directly and verify it matches
-	filePath := filepath.Join(tmpDir, ref.String())
+	filePath := filepath.Join(tmpDir, ref.String()[7:9], ref.String())
 	fileData, err := os.ReadFile(filePath)
 	require.NoError(t, err)
 	assert.Equal(t, testData, fileData)
@@ -340,7 +340,7 @@ func TestLocalStorage_EncryptedPutGet(t *testing.T) {
 	ref, _, err := storage.Put(ctx, bytes.NewReader(testData))
 	require.NoError(t, err)
 
-	storedData, err := os.ReadFile(filepath.Join(tmpDir, ref.String()))
+	storedData, err := os.ReadFile(filepath.Join(tmpDir, ref.String()[7:9], ref.String()))
 	require.NoError(t, err)
 	assert.NotEqual(t, testData, storedData)
 
@@ -417,4 +417,77 @@ func TestLocalStorage_Delete(t *testing.T) {
 	require.ErrorIs(t, err, blob.ErrNotFound)
 
 	require.NoError(t, storage.Delete(ctx, ref))
+}
+
+func TestLocalStorage_Sharded(t *testing.T) {
+	tmpDir := t.TempDir()
+	storage := NewStorage(WithPath(tmpDir))
+	ctx := context.Background()
+
+	ref, _, err := storage.Put(ctx, bytes.NewReader([]byte("hello world")))
+	require.NoError(t, err)
+
+	// sha256-b94d27b9934d3e08...
+	_, err = os.Stat(filepath.Join(tmpDir, "b9", ref.String()))
+	require.NoError(t, err)
+}
+
+func TestLocalStorage_LegacyLayout(t *testing.T) {
+	tmpDir := t.TempDir()
+	ctx := context.Background()
+
+	// blobs written by older versions sit directly in the storage folder
+	legacy := map[string][]byte{}
+	for i := range 20 {
+		data := []byte(fmt.Sprintf("legacy blob %d", i))
+		ref := hash.FromBytes(data)
+		require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ref.String()), data, 0o644))
+		legacy[ref.String()] = data
+	}
+
+	storage := NewStorage(WithPath(tmpDir))
+	fresh, _, err := storage.Put(ctx, bytes.NewReader([]byte("fresh")))
+	require.NoError(t, err)
+
+	check := func() {
+		listed := 0
+		for ref, err := range storage.List(ctx) {
+			require.NoError(t, err)
+			listed++
+
+			if want, ok := legacy[ref.String()]; ok {
+				rc, err := storage.Get(ctx, ref)
+				require.NoError(t, err)
+				got, err := io.ReadAll(rc)
+				require.NoError(t, err)
+				rc.Close()
+				require.Equal(t, want, got)
+			}
+		}
+		require.Equal(t, len(legacy)+1, listed)
+	}
+
+	check()
+
+	// delete works on the legacy layout
+	legacyRef := hash.FromBytes([]byte("legacy blob 0"))
+	require.NoError(t, storage.Delete(ctx, legacyRef))
+	_, err = os.Stat(storage.legacyPath(legacyRef))
+	require.ErrorIs(t, err, os.ErrNotExist)
+	_, err = storage.Get(ctx, legacyRef)
+	require.ErrorIs(t, err, blob.ErrNotFound)
+	delete(legacy, legacyRef.String())
+
+	require.NoError(t, storage.Migrate(ctx))
+	check()
+
+	entries, err := os.ReadDir(tmpDir)
+	require.NoError(t, err)
+	for _, e := range entries {
+		require.True(t, e.IsDir(), "%s should have been migrated", e.Name())
+	}
+
+	require.NoError(t, storage.Delete(ctx, fresh))
+	_, err = storage.Get(ctx, fresh)
+	require.ErrorIs(t, err, blob.ErrNotFound)
 }
