@@ -124,3 +124,33 @@ func BenchmarkMerkleLocal_PutConcurrency(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkMerkleLocal_VerifyConcurrency(b *testing.B) {
+	pub, priv := getTestKeysBench(b)
+
+	data := make([]byte, 64*1024*1024)
+	_, _ = rand.Read(data)
+
+	for _, c := range []int{1, 4} {
+		b.Run(fmt.Sprintf("c=%d", c), func(b *testing.B) {
+			m, err := New(
+				WithStorage(local.NewStorage(local.WithPath(b.TempDir()))),
+				WithChunckSize(1*1024*1024),
+				WithKeys(pub, priv),
+				WithConcurrency(c),
+			)
+			require.NoError(b, err)
+			ctx := context.Background()
+
+			ref, _, err := m.Put(ctx, bytes.NewReader(data))
+			require.NoError(b, err)
+
+			b.SetBytes(int64(len(data)))
+			for b.Loop() {
+				if err := m.Verify(ctx, ref); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}

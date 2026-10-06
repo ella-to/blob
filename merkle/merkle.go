@@ -233,13 +233,25 @@ func (m *Storage) ListRootChildrenNodes(ctx context.Context, ref blob.Ref, dataO
 	}
 }
 
+// Verify checks the signature of every node and the hash of every chunk
+// under id. With concurrency > 1 chunks are verified in parallel.
 func (m *Storage) Verify(ctx context.Context, id blob.Ref) error {
+	sem := make(chan struct{}, max(1, m.concurrency))
+	return m.verify(ctx, id, sem)
+}
+
+func (m *Storage) verify(ctx context.Context, id blob.Ref, sem chan struct{}) error {
+	// the slot is only held while a blob is open, never while waiting for
+	// children, so the tree can't deadlock the semaphore
+	sem <- struct{}{}
 	node, data, err := m.open(ctx, id)
 	if err != nil {
+		<-sem
 		return err
 	}
 
 	if data != nil {
+		defer func() { <-sem }()
 		defer data.Close()
 
 		refValue, err := hash.FromReader(data)
@@ -253,14 +265,27 @@ func (m *Storage) Verify(ctx context.Context, id blob.Ref) error {
 
 		return nil
 	}
+	<-sem
 
-	for _, child := range node.Children {
-		if err := m.Verify(ctx, child); err != nil {
-			return err
+	if cap(sem) == 1 {
+		for _, child := range node.Children {
+			if err := m.verify(ctx, child, sem); err != nil {
+				return err
+			}
 		}
+		return nil
 	}
 
-	return nil
+	errs := make([]error, len(node.Children))
+	var wg sync.WaitGroup
+	for i, child := range node.Children {
+		wg.Go(func() {
+			errs[i] = m.verify(ctx, child, sem)
+		})
+	}
+	wg.Wait()
+
+	return errors.Join(errs...)
 }
 
 func (m *Storage) isValidMerkleNode(ctx context.Context, ref blob.Ref) (*Node, error) {
