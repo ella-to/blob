@@ -24,6 +24,7 @@ type Storage struct {
 const (
 	defaultCryptoBlockSize = 1024
 	tmpPrefix              = "tmp-"
+	ioBufferSize           = 64 * 1024
 )
 
 var (
@@ -55,7 +56,7 @@ func (s *Storage) Put(ctx context.Context, r io.Reader) (ref hash.Hash, n int64,
 	}()
 
 	// Use buffered writer for better performance
-	bw := bufio.NewWriter(out)
+	bw := bufio.NewWriterSize(out, ioBufferSize)
 	hr, getRef := hash.FromTeeReader(r)
 
 	if len(s.key) > 0 {
@@ -94,18 +95,7 @@ func (s *Storage) Get(ctx context.Context, r hash.Hash) (rc io.ReadCloser, err e
 		return file, nil
 	}
 
-	pr, pw := io.Pipe()
-	go func() {
-		_, decErr := crypto.DecryptStream(s.cryptoKey(), defaultCryptoBlockSize, pw, fullReader{file})
-		_ = file.Close()
-		if decErr != nil {
-			_ = pw.CloseWithError(decErr)
-			return
-		}
-		_ = pw.Close()
-	}()
-
-	return pr, nil
+	return newDecryptReader(s.cryptoKey(), file), nil
 }
 
 func (s *Storage) List(ctx context.Context) iter.Seq2[hash.Hash, error] {
@@ -175,4 +165,50 @@ func (f fullReader) Read(p []byte) (int, error) {
 		err = nil
 	}
 	return n, err
+}
+
+// decryptReader decrypts one block per refill, in the caller's goroutine.
+type decryptReader struct {
+	key     [32]byte
+	src     io.Reader
+	file    *os.File
+	block   []byte
+	pending []byte
+	err     error
+}
+
+func newDecryptReader(key [32]byte, file *os.File) *decryptReader {
+	return &decryptReader{
+		key:   key,
+		src:   bufio.NewReaderSize(file, ioBufferSize),
+		file:  file,
+		block: make([]byte, defaultCryptoBlockSize+crypto.EncryptionOverhead),
+	}
+}
+
+func (d *decryptReader) Read(p []byte) (int, error) {
+	for len(d.pending) == 0 {
+		if d.err != nil {
+			return 0, d.err
+		}
+
+		n, err := io.ReadFull(d.src, d.block)
+		if n > 0 {
+			d.pending, d.err = crypto.Decrypt(d.key, d.block[:n])
+		}
+		if errors.Is(err, io.ErrUnexpectedEOF) {
+			err = io.EOF
+		}
+		if d.err == nil {
+			d.err = err
+		}
+	}
+
+	n := copy(p, d.pending)
+	d.pending = d.pending[n:]
+	return n, nil
+}
+
+func (d *decryptReader) Close() error {
+	return d.file.Close()
 }
