@@ -21,9 +21,9 @@ const (
 	MaxChildren = 4
 	// type can be either "hash" or "data"
 	MinNodeSize = len(`{"is_root":true,"children":[]}`) + hash.StringSize
-	MaxNodeSize = MinNodeSize +
-		MaxChildren*(hash.StringSize+2) + (MaxChildren - 1) + // 4 for quotes and 1 for comma,
-		1 // because true and false has one char diff
+	MaxNodeSize = len(`{"is_root":false,"signed":"","children":[]}`) +
+		2*(crypto.SignOverhead+hash.ByteSize) + // hex encoded signature
+		MaxChildren*(hash.StringSize+2) + (MaxChildren - 1) // 2 for quotes and 1 for comma
 )
 
 func ParseNode(r io.Reader) (*Node, error) {
