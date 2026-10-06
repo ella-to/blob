@@ -34,6 +34,10 @@ type Storage struct {
 	chunckSize   int64
 	concurrency  int
 	chunks       sync.Pool
+
+	// gcMu is held for reading by Put and Delete and for writing by GC, so
+	// GC never removes a blob a running Put has just deduplicated against.
+	gcMu sync.RWMutex
 }
 
 var (
@@ -43,6 +47,9 @@ var (
 )
 
 func (m *Storage) Put(ctx context.Context, r io.Reader) (blob.Ref, int64, error) {
+	m.gcMu.RLock()
+	defer m.gcMu.RUnlock()
+
 	refs, totalSize, err := m.putChunks(ctx, r)
 	if err != nil {
 		return nil, totalSize, err
@@ -86,7 +93,20 @@ func (m *Storage) Put(ctx context.Context, r io.Reader) (blob.Ref, int64, error)
 		}
 	}
 
-	return refs[0], totalSize, nil
+	root := refs[0]
+
+	// putting a deleted tree again revives it
+	if deleter, ok := m.storage.(blob.Deleter); ok {
+		tombstone, err := tombstoneRef(root, m.privateKey)
+		if err != nil {
+			return nil, totalSize, err
+		}
+		if err := deleter.Delete(ctx, tombstone); err != nil {
+			return nil, totalSize, err
+		}
+	}
+
+	return root, totalSize, nil
 }
 
 // putChunks splits r into chunks and stores them. With concurrency > 1,
@@ -143,24 +163,30 @@ func (m *Storage) putChunks(ctx context.Context, r io.Reader) ([]blob.Ref, int64
 }
 
 func (m *Storage) Get(ctx context.Context, r blob.Ref) (rc io.ReadCloser, err error) {
-	node, data, err := m.open(ctx, r)
+	obj, err := m.open(ctx, r)
 	if err != nil {
 		return nil, err
 	}
 
-	if data != nil {
-		return data, nil
+	if obj.data != nil {
+		return obj.data, nil
 	}
 
-	return &treeReader{ctx: ctx, m: m, stack: [][]blob.Ref{node.Children}}, nil
+	return &treeReader{ctx: ctx, m: m, stack: [][]blob.Ref{obj.node.Children}}, nil
 }
 
+// ListRootNodes yields every root that hasn't been deleted. Tombstones can
+// be listed after the root they delete, so roots are yielded once the
+// whole storage has been scanned.
 func (m *Storage) ListRootNodes(ctx context.Context) iter.Seq2[blob.Ref, error] {
 	return func(yield func(blob.Ref, error) bool) {
+		roots := make([]blob.Ref, 0)
+		deleted := make(map[string]struct{})
+
 		for ref, err := range m.storage.List(ctx) {
 			if err != nil {
 				if errors.Is(err, io.EOF) {
-					return
+					break
 				}
 				if !yield(nil, err) {
 					return
@@ -172,20 +198,29 @@ func (m *Storage) ListRootNodes(ctx context.Context) iter.Seq2[blob.Ref, error] 
 				continue
 			}
 
-			node, err := m.isValidMerkleNode(ctx, ref)
-			if errors.Is(err, ErrNotNode) {
-				continue
-			} else if err != nil {
+			obj, err := m.open(ctx, ref)
+			if err != nil {
 				if !yield(nil, err) {
 					return
 				}
 				continue
 			}
+			obj.close()
 
-			if node.IsRoot {
-				if !yield(ref, nil) {
-					return
-				}
+			switch {
+			case obj.node != nil && obj.node.IsRoot:
+				roots = append(roots, ref)
+			case obj.tombstone != nil:
+				deleted[string(obj.tombstone.Root)] = struct{}{}
+			}
+		}
+
+		for _, root := range roots {
+			if _, ok := deleted[string(root)]; ok {
+				continue
+			}
+			if !yield(root, nil) {
+				return
 			}
 		}
 	}
@@ -244,12 +279,13 @@ func (m *Storage) verify(ctx context.Context, id blob.Ref, sem chan struct{}) er
 	// the slot is only held while a blob is open, never while waiting for
 	// children, so the tree can't deadlock the semaphore
 	sem <- struct{}{}
-	node, data, err := m.open(ctx, id)
+	obj, err := m.open(ctx, id)
 	if err != nil {
 		<-sem
 		return err
 	}
 
+	node, data := obj.node, obj.data
 	if data != nil {
 		defer func() { <-sem }()
 		defer data.Close()
@@ -289,17 +325,17 @@ func (m *Storage) verify(ctx context.Context, id blob.Ref, sem chan struct{}) er
 }
 
 func (m *Storage) isValidMerkleNode(ctx context.Context, ref blob.Ref) (*Node, error) {
-	node, data, err := m.open(ctx, ref)
+	obj, err := m.open(ctx, ref)
 	if err != nil {
 		return nil, err
 	}
 
-	if data != nil {
-		_ = data.Close()
+	if obj.node == nil {
+		obj.close()
 		return nil, fmt.Errorf("%w: %s", ErrNotNode, ref)
 	}
 
-	return node, nil
+	return obj.node, nil
 }
 
 type merkleOpt interface {

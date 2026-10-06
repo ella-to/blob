@@ -3,6 +3,7 @@ package merkle
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -12,13 +13,28 @@ import (
 
 var nodePrefix = []byte(`{"is_root":`)
 
-// open fetches a blob once and classifies it. Merkle nodes are always smaller
-// than MaxNodeSize, so only a small prefix is read to tell nodes and data
-// apart. For data blobs the returned reader yields the full content.
-func (m *Storage) open(ctx context.Context, ref blob.Ref) (*Node, io.ReadCloser, error) {
+// object is a blob classified by open. Exactly one of node and data is set;
+// a valid tombstone is returned as data as well, so it reads like any blob.
+type object struct {
+	node      *Node
+	tombstone *Tombstone
+	data      io.ReadCloser
+}
+
+func (o *object) close() {
+	if o.data != nil {
+		_ = o.data.Close()
+	}
+}
+
+// open fetches a blob once and classifies it. Merkle nodes and tombstones are
+// always smaller than MaxNodeSize, so only a small prefix is read to tell
+// them apart from data. For data blobs the returned reader yields the full
+// content.
+func (m *Storage) open(ctx context.Context, ref blob.Ref) (*object, error) {
 	rc, err := m.storage.Get(ctx, ref)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	buf := make([]byte, MaxNodeSize+1)
@@ -26,41 +42,35 @@ func (m *Storage) open(ctx context.Context, ref blob.Ref) (*Node, io.ReadCloser,
 	switch {
 	case err == nil:
 		// bigger than any node, so it must be data
-		return nil, &prefixReader{prefix: buf, rc: rc}, nil
+		return &object{data: &prefixReader{prefix: buf, rc: rc}}, nil
 	case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
 		_ = rc.Close()
 	default:
 		_ = rc.Close()
-		return nil, nil, err
+		return nil, err
 	}
 
 	buf = buf[:n]
+	obj := &object{}
 
-	node, err := m.parseNode(ref, buf)
-	if errors.Is(err, ErrNotNode) {
-		return nil, io.NopCloser(bytes.NewReader(buf)), nil
-	} else if err != nil {
-		return nil, nil, err
+	if bytes.HasPrefix(buf, tombstonePrefix) {
+		t := &Tombstone{}
+		if json.Unmarshal(buf, t) == nil && t.Validate(m.publicKey) {
+			obj.tombstone = t
+		}
+	} else if bytes.HasPrefix(buf, nodePrefix) {
+		node, err := ParseNode(bytes.NewReader(buf))
+		if err == nil {
+			if !node.Validate(ctx, m.publicKey) {
+				return nil, fmt.Errorf("%w: %s", ErrInvalidNode, ref)
+			}
+			obj.node = node
+			return obj, nil
+		}
 	}
 
-	return node, nil, nil
-}
-
-func (m *Storage) parseNode(ref blob.Ref, b []byte) (*Node, error) {
-	if !bytes.HasPrefix(b, nodePrefix) {
-		return nil, fmt.Errorf("%w: %s", ErrNotNode, ref)
-	}
-
-	node, err := ParseNode(bytes.NewReader(b))
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w: %s", ErrNotNode, err, ref)
-	}
-
-	if !node.Validate(context.Background(), m.publicKey) {
-		return nil, fmt.Errorf("%w: %s", ErrInvalidNode, ref)
-	}
-
-	return node, nil
+	obj.data = io.NopCloser(bytes.NewReader(buf))
+	return obj, nil
 }
 
 // prefixReader replays the bytes already consumed by open before reading the
@@ -121,17 +131,17 @@ func (t *treeReader) next() error {
 		ref := (*top)[0]
 		*top = (*top)[1:]
 
-		node, data, err := t.m.open(t.ctx, ref)
+		obj, err := t.m.open(t.ctx, ref)
 		if err != nil {
 			return err
 		}
 
-		if node != nil {
-			t.stack = append(t.stack, node.Children)
+		if obj.node != nil {
+			t.stack = append(t.stack, obj.node.Children)
 			continue
 		}
 
-		t.cur = data
+		t.cur = obj.data
 		return nil
 	}
 }

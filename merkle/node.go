@@ -90,9 +90,14 @@ func (n Node) Ref() hash.Hash {
 }
 
 func (n *Node) Validate(ctx context.Context, publicKey *crypto.PublicKey) bool {
+	return verify(publicKey, n.Signed, n.Ref())
+}
+
+// verify checks that signed is the signature of ref.
+func verify(publicKey *crypto.PublicKey, signed crypto.Signed, ref hash.Hash) bool {
 	buffer := make([]byte, crypto.SignOverhead+hash.ByteSize)
-	copy(buffer[:crypto.SignOverhead], n.Signed)
-	copy(buffer[crypto.SignOverhead:], n.Ref())
+	copy(buffer[:crypto.SignOverhead], signed)
+	copy(buffer[crypto.SignOverhead:], ref)
 	return publicKey.Verify(buffer)
 }
 

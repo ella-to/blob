@@ -368,3 +368,39 @@ func BenchmarkCalcRootSigned(b *testing.B) {
 		})
 	}
 }
+
+// Benchmark GC of 50 deleted trees out of 100 sharing half of their chunks
+func BenchmarkMerkleStorage_GC(b *testing.B) {
+	pub, priv := getTestKeysBench(b)
+	ctx := context.Background()
+
+	shared := make([]byte, 64*1024)
+	_, _ = rand.Read(shared)
+
+	for b.Loop() {
+		b.StopTimer()
+		m, err := New(
+			WithStorage(memory.New()),
+			WithChunckSize(4*1024),
+			WithKeys(pub, priv),
+		)
+		require.NoError(b, err)
+
+		for i := range 100 {
+			data := make([]byte, 128*1024)
+			copy(data, shared)
+			_, _ = rand.Read(data[len(shared):])
+
+			root, _, err := m.Put(ctx, bytes.NewReader(data))
+			require.NoError(b, err)
+			if i%2 == 0 {
+				require.NoError(b, m.Delete(ctx, root))
+			}
+		}
+		b.StartTimer()
+
+		if _, err := m.GC(ctx); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
