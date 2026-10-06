@@ -24,7 +24,9 @@ go get ella.to/blob@v0.0.2
 
 ## Overview
 
-Blob provides a simple interface for storing and retrieving data by its SHA-256 hash. Data goes in, you get a reference back, and you can always retrieve the exact same data using that reference. The library ships with two storage backends (local filesystem and in-memory) and a Merkle tree layer for handling large files with integrity verification.
+Blob provides a simple interface for storing and retrieving data by its SHA-256 hash. Data goes in, you get a reference back, and you can always retrieve the exact same data using that reference. The library ships with three storage backends (local filesystem, Pebble and in-memory) and a Merkle tree layer for handling large files with integrity verification, deletion and garbage collection.
+
+See [guide.md](guide.md) for runnable examples.
 
 ## Core Interfaces
 
@@ -45,13 +47,18 @@ type Getter interface {
 type Lister interface {
     List(ctx context.Context) iter.Seq2[Ref, error]
 }
+
+// Remove a blob; removing a missing blob is not an error
+type Deleter interface {
+    Delete(ctx context.Context, ref Ref) error
+}
 ```
 
 `Ref` is just a type alias for `hash.Hash` — a SHA-256 digest of the content.
 
 ## Local Storage
 
-The `local` sub-package stores blobs as files on disk, named by their hash. It optionally encrypts content at rest.
+The `local` sub-package stores blobs as files on disk, named by their hash, in a folder named after the first two hex characters of the hash (`<path>/b9/sha256-b94d27...`). It optionally encrypts content at rest. Stores using the older flat layout are still readable; `storage.Migrate(ctx)` moves them into folders.
 
 ```go
 import "ella.to/blob/local"
@@ -99,6 +106,17 @@ for ref, err := range storage.List(ctx) {
 }
 ```
 
+## Pebble Storage
+
+The `pebble` sub-package keeps every blob in a single [Pebble](https://github.com/cockroachdb/pebble) database. It is much faster than `local` for small blobs and high request rates, slower for large sequential writes.
+
+```go
+import "ella.to/blob/pebble"
+
+storage, err := pebble.Open("/var/data/blobs.db", pebble.WithKey("my-secret-key"))
+defer storage.Close()
+```
+
 ## In-Memory Storage
 
 Useful for tests or caching. Same interface, no disk involved.
@@ -134,6 +152,7 @@ m, err := merkle.New(
     merkle.WithKeys(pub, priv),
     merkle.WithChunckSize(16 * 1024 * 1024), // 16 MB chunks (default)
     merkle.WithChildrenSize(2),                // binary tree (default)
+    merkle.WithConcurrency(4),                 // parallel Put/Verify (default 1)
 )
 ```
 
@@ -168,6 +187,15 @@ for ref, err := range m.ListRootNodes(ctx) {
 }
 ```
 
+### Delete and Garbage Collection
+
+`Delete` stores a signed tombstone for a root; the tree is hidden from `ListRootNodes` immediately. `GC` removes every blob of deleted trees that is not shared with a live tree. The backend must implement `blob.Deleter`.
+
+```go
+err := m.Delete(ctx, ref)
+stats, err := m.GC(ctx)
+```
+
 ### Computing Merkle Root Without Storing
 
 If you just need the root hash (e.g. for comparison) without actually storing the data:
@@ -199,7 +227,7 @@ Node structure:
 
 ## Thread Safety
 
-Both `local.Storage` and `memory.Storage` are safe for concurrent use. The Merkle tree layer inherits thread safety from the underlying backend.
+`local.Storage`, `pebble.Storage` and `memory.Storage` are safe for concurrent use. The Merkle tree layer inherits thread safety from the underlying backend; `GC` blocks `Put` and `Delete` of the same `merkle.Storage` while it runs.
 
 ## License
 
