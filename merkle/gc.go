@@ -66,37 +66,35 @@ func (m *Storage) GC(ctx context.Context) (GCStats, error) {
 	m.gcMu.Lock()
 	defer m.gcMu.Unlock()
 
-	roots, tombstones, err := m.scan(ctx)
+	g, err := m.scan(ctx)
 	if err != nil {
 		return stats, err
 	}
 
 	// mark
 	live := make(map[string]struct{})
-	for _, root := range roots {
-		if _, ok := tombstones[string(root)]; ok {
+	for _, root := range g.roots {
+		if _, ok := g.tombstones[string(root)]; ok {
 			continue
 		}
 
 		stats.Roots++
-		err := m.walk(ctx, root, false, func(ref blob.Ref) bool {
+		g.walk(root, func(ref blob.Ref) bool {
 			if _, ok := live[string(ref)]; ok {
 				return false
 			}
 			live[string(ref)] = struct{}{}
 			return true
 		})
-		if err != nil {
-			return stats, err
-		}
 	}
 
 	// collect garbage of all deleted trees before removing anything, as
-	// deleted trees can share blobs as well
+	// deleted trees can share blobs as well. Blobs a previous GC already
+	// removed are simply not in the graph anymore.
 	garbage := make([]blob.Ref, 0)
 	seen := make(map[string]struct{})
-	for rootKey := range tombstones {
-		err := m.walk(ctx, blob.Ref(rootKey), true, func(ref blob.Ref) bool {
+	for rootKey := range g.tombstones {
+		g.walk(blob.Ref(rootKey), func(ref blob.Ref) bool {
 			if _, ok := live[string(ref)]; ok {
 				return false
 			}
@@ -107,10 +105,6 @@ func (m *Storage) GC(ctx context.Context) (GCStats, error) {
 			garbage = append(garbage, ref)
 			return true
 		})
-		// a previous GC may have already removed part of the tree
-		if err != nil {
-			return stats, err
-		}
 	}
 
 	// sweep, children first: walk is pre-order, so reverse it
@@ -121,7 +115,7 @@ func (m *Storage) GC(ctx context.Context) (GCStats, error) {
 		stats.Deleted++
 	}
 
-	for _, tombstone := range tombstones {
+	for _, tombstone := range g.tombstones {
 		if err := deleter.Delete(ctx, tombstone); err != nil {
 			return stats, err
 		}
@@ -132,16 +126,25 @@ func (m *Storage) GC(ctx context.Context) (GCStats, error) {
 	return stats, nil
 }
 
-// scan lists every root and every tombstone in the storage. Tombstones are
-// keyed by the root they delete.
-func (m *Storage) scan(ctx context.Context) (roots []blob.Ref, tombstones map[string]blob.Ref, err error) {
-	tombstones = make(map[string]blob.Ref)
+// graph is the shape of every tree in the storage, built by a single scan so
+// that GC opens and verifies each blob once.
+type graph struct {
+	roots      []blob.Ref
+	tombstones map[string]blob.Ref   // root -> tombstone
+	children   map[string][]blob.Ref // node -> children; data isn't listed
+}
+
+func (m *Storage) scan(ctx context.Context) (*graph, error) {
+	g := &graph{
+		tombstones: make(map[string]blob.Ref),
+		children:   make(map[string][]blob.Ref),
+	}
 
 	for ref, err := range m.storage.List(ctx) {
 		if errors.Is(err, io.EOF) {
 			break
 		} else if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 
 		if ref == nil {
@@ -153,46 +156,32 @@ func (m *Storage) scan(ctx context.Context) (roots []blob.Ref, tombstones map[st
 			// signed by another key, or removed since it was listed
 			continue
 		} else if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		obj.close()
 
 		switch {
-		case obj.node != nil && obj.node.IsRoot:
-			roots = append(roots, ref)
+		case obj.node != nil:
+			g.children[string(ref)] = obj.node.Children
+			if obj.node.IsRoot {
+				g.roots = append(g.roots, ref)
+			}
 		case obj.tombstone != nil:
-			tombstones[string(obj.tombstone.Root)] = ref
+			g.tombstones[string(obj.tombstone.Root)] = ref
 		}
 	}
 
-	return roots, tombstones, nil
+	return g, nil
 }
 
 // walk visits ref and everything below it in pre-order. Returning false from
-// fn skips the children of ref. With skipMissing, blobs that are already
-// gone are ignored instead of failing the walk.
-func (m *Storage) walk(ctx context.Context, ref blob.Ref, skipMissing bool, fn func(blob.Ref) bool) error {
+// fn skips the children of ref.
+func (g *graph) walk(ref blob.Ref, fn func(blob.Ref) bool) {
 	if !fn(ref) {
-		return nil
+		return
 	}
 
-	obj, err := m.open(ctx, ref)
-	if skipMissing && errors.Is(err, blob.ErrNotFound) {
-		return nil
-	} else if err != nil {
-		return err
+	for _, child := range g.children[string(ref)] {
+		g.walk(child, fn)
 	}
-	obj.close()
-
-	if obj.node == nil {
-		return nil
-	}
-
-	for _, child := range obj.node.Children {
-		if err := m.walk(ctx, child, skipMissing, fn); err != nil {
-			return err
-		}
-	}
-
-	return nil
 }
