@@ -5,7 +5,8 @@ import (
 	"context"
 	"io"
 	"iter"
-	"sort"
+	"maps"
+	"slices"
 	"sync"
 
 	"ella.to/blob"
@@ -64,25 +65,13 @@ func (s *Storage) Delete(ctx context.Context, r hash.Hash) error {
 
 func (s *Storage) List(ctx context.Context) iter.Seq2[hash.Hash, error] {
 	s.mu.RLock()
-	keys := make([]hash.Hash, 0, len(s.mapper))
-	for k := range s.mapper {
-		keys = append(keys, hash.Hash(k))
-	}
+	// sorted to make tests deterministic, as map order is random
+	keys := slices.Sorted(maps.Keys(s.mapper))
 	s.mu.RUnlock()
 
-	// sort keys to make test deterministic, as hash map is no deterministic
-	sort.Slice(keys, func(i, j int) bool {
-		return keys[i].String() < keys[j].String()
-	})
-
 	return func(yield func(hash.Hash, error) bool) {
-		idx := 0
-
-		for idx < len(keys) {
-			ref := keys[idx]
-
-			idx++
-			if !yield(ref, nil) {
+		for _, key := range keys {
+			if !yield(hash.Hash(key), nil) {
 				return
 			}
 		}

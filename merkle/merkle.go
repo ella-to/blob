@@ -74,7 +74,7 @@ func (m *Storage) Put(ctx context.Context, r io.Reader) (blob.Ref, int64, error)
 	}
 
 	// need to run this loop for all levels to calculate the root hash
-	for i := 0; i < levels; i++ {
+	for i := range levels {
 		isRoot := i+1 == levels
 
 		b := newBatch(ctx, m.storage, m.concurrency)
@@ -406,8 +406,7 @@ func New(optsFn ...merkleOpt) (*Storage, error) {
 	}
 
 	storage.chunks.New = func() any {
-		buf := make([]byte, storage.chunckSize)
-		return &buf
+		return new(make([]byte, storage.chunckSize))
 	}
 
 	return storage, nil

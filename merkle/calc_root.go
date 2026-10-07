@@ -76,16 +76,13 @@ func calcRoot(r io.Reader, chunkSize int64, childrenSize int, privateKey *crypto
 		}
 	}
 
-	for i := 0; i < levels; i++ {
+	for i := range levels {
 		isRoot := i+1 == levels
 		nextRefs := make([]hash.Hash, 0, (len(refs)+childrenSize-1)/childrenSize)
 
 		for j := 0; j < len(refs); j += childrenSize {
 			start := j
-			end := start + childrenSize
-			if end > len(refs) {
-				end = len(refs)
-			}
+			end := min(start+childrenSize, len(refs))
 
 			node := &Node{
 				IsRoot:   isRoot,

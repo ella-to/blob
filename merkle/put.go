@@ -56,14 +56,10 @@ func (b *batch) put(fn func() io.Reader, done func()) {
 	}
 
 	b.sem <- struct{}{}
-	b.wg.Add(1)
-	go func() {
-		defer func() {
-			<-b.sem
-			b.wg.Done()
-		}()
+	b.wg.Go(func() {
+		defer func() { <-b.sem }()
 		run()
-	}()
+	})
 }
 
 func (b *batch) failed() bool {

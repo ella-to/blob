@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 
 	"ella.to/blob"
 )
@@ -108,8 +109,8 @@ func (m *Storage) GC(ctx context.Context) (GCStats, error) {
 	}
 
 	// sweep, children first: walk is pre-order, so reverse it
-	for i := len(garbage) - 1; i >= 0; i-- {
-		if err := deleter.Delete(ctx, garbage[i]); err != nil {
+	for _, g := range slices.Backward(garbage) {
+		if err := deleter.Delete(ctx, g); err != nil {
 			return stats, err
 		}
 		stats.Deleted++
