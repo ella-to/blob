@@ -9,7 +9,6 @@
 <div align="center">
 
 [![Go Reference](https://pkg.go.dev/badge/ella.to/blob.svg)](https://pkg.go.dev/ella.to/blob)
-[![Go Report Card](https://goreportcard.com/badge/ella.to/blob)](https://goreportcard.com/report/ella.to/blob)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 **blob** is a content-addressable storage library with Merkle tree support, optional encryption, and pluggable backends.
@@ -19,7 +18,7 @@
 ## Installation
 
 ```bash
-go get ella.to/blob@v0.0.2
+go get ella.to/blob@v0.0.3
 ```
 
 ## Overview
