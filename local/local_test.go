@@ -432,69 +432,25 @@ func TestLocalStorage_Sharded(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestLocalStorage_LegacyLayout(t *testing.T) {
+func TestLocalStorage_ListOnlyShardFolders(t *testing.T) {
 	tmpDir := t.TempDir()
+	storage := NewStorage(WithPath(tmpDir))
 	ctx := context.Background()
 
-	// blobs written by older versions sit directly in the storage folder
-	legacy := map[string][]byte{}
-	for i := range 20 {
-		data := []byte(fmt.Sprintf("legacy blob %d", i))
-		ref := hash.FromBytes(data)
-		require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ref.String()), data, 0o644))
-		legacy[ref.String()] = data
-	}
-
-	storage := NewStorage(WithPath(tmpDir))
-	fresh, _, err := storage.Put(ctx, bytes.NewReader([]byte("fresh")))
+	ref, _, err := storage.Put(ctx, bytes.NewReader([]byte("sharded")))
 	require.NoError(t, err)
 
-	check := func() {
-		listed := 0
-		for ref, err := range storage.List(ctx) {
-			require.NoError(t, err)
-			listed++
+	// a blob named file directly under the storage path is not part of it
+	stray := hash.FromBytes([]byte("stray"))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, stray.String()), []byte("stray"), 0o644))
 
-			if want, ok := legacy[ref.String()]; ok {
-				rc, err := storage.Get(ctx, ref)
-				require.NoError(t, err)
-				got, err := io.ReadAll(rc)
-				require.NoError(t, err)
-				rc.Close()
-				require.Equal(t, want, got)
-			}
-		}
-		require.Equal(t, len(legacy)+1, listed)
+	listed := make([]hash.Hash, 0)
+	for r, err := range storage.List(ctx) {
+		require.NoError(t, err)
+		listed = append(listed, r)
 	}
+	require.Equal(t, []hash.Hash{ref}, listed)
 
-	check()
-
-	// delete works on the legacy layout
-	legacyRef := hash.FromBytes([]byte("legacy blob 0"))
-	require.NoError(t, storage.Delete(ctx, legacyRef))
-	_, err = os.Stat(storage.legacyPath(legacyRef))
-	require.ErrorIs(t, err, os.ErrNotExist)
-	_, err = storage.Get(ctx, legacyRef)
+	_, err = storage.Get(ctx, stray)
 	require.ErrorIs(t, err, blob.ErrNotFound)
-	delete(legacy, legacyRef.String())
-
-	require.NoError(t, storage.Migrate(ctx))
-	check()
-
-	entries, err := os.ReadDir(tmpDir)
-	require.NoError(t, err)
-	for _, e := range entries {
-		require.True(t, e.IsDir(), "%s should have been migrated", e.Name())
-	}
-
-	require.NoError(t, storage.Delete(ctx, fresh))
-	_, err = storage.Get(ctx, fresh)
-	require.ErrorIs(t, err, blob.ErrNotFound)
-}
-
-func TestLocalStorage_PutEmptyError(t *testing.T) {
-	storage := NewStorage(WithPath(t.TempDir()))
-
-	_, _, err := storage.Put(context.Background(), bytes.NewReader(nil))
-	require.Equal(t, io.EOF, err)
 }

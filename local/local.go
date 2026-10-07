@@ -10,7 +10,6 @@ import (
 	"iter"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -22,16 +21,10 @@ import (
 // Storage keeps every blob in its own file under a folder named after the
 // first byte of its hash (2 hex chars), so a folder holds ~1/256 of the
 // blobs: <path>/b9/sha256-b94d27...
-//
-// Blobs written by older versions directly under <path> are still read,
-// listed and deleted; Migrate moves them into their folders.
 type Storage struct {
 	path string
 	key  []byte
 	dirs [256]atomic.Bool // shard folders known to exist
-
-	legacyOnce sync.Once
-	legacy     atomic.Bool // blobs in the old flat layout may exist
 }
 
 const (
@@ -114,9 +107,6 @@ func (s *Storage) Get(ctx context.Context, r hash.Hash) (rc io.ReadCloser, err e
 	}
 
 	file, err := os.Open(s.blobPath(r))
-	if errors.Is(err, os.ErrNotExist) && s.hasLegacy() {
-		file, err = os.Open(s.legacyPath(r))
-	}
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("%w: %w: %s ", blob.ErrNotFound, err, r)
 	}
@@ -138,9 +128,6 @@ func (s *Storage) Delete(ctx context.Context, r hash.Hash) error {
 	}
 
 	err := os.Remove(s.blobPath(r))
-	if errors.Is(err, os.ErrNotExist) && s.hasLegacy() {
-		err = os.Remove(s.legacyPath(r))
-	}
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
@@ -148,77 +135,8 @@ func (s *Storage) Delete(ctx context.Context, r hash.Hash) error {
 	return err
 }
 
-// Migrate moves blobs stored by older versions directly under the storage
-// path into their shard folders.
-func (s *Storage) Migrate(ctx context.Context) error {
-	entries, err := os.ReadDir(s.path)
-	if err != nil {
-		return err
-	}
-
-	for _, entry := range entries {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-
-		if entry.IsDir() {
-			continue
-		}
-
-		ref, err := hash.ParseFromString(entry.Name())
-		if err != nil {
-			continue
-		}
-
-		if err := s.ensureDir(ref); err != nil {
-			return err
-		}
-
-		if err := os.Rename(s.legacyPath(ref), s.blobPath(ref)); err != nil {
-			return err
-		}
-	}
-
-	s.legacyOnce.Do(func() {})
-	s.legacy.Store(false)
-
-	return nil
-}
-
-// hasLegacy reports whether the storage folder had blobs in the old flat
-// layout when first checked, so new stores never pay for a second lookup.
-func (s *Storage) hasLegacy() bool {
-	s.legacyOnce.Do(func() {
-		dir, err := os.Open(s.path)
-		if err != nil {
-			s.legacy.Store(true)
-			return
-		}
-		defer dir.Close()
-
-		for {
-			entries, err := dir.ReadDir(256)
-			for _, entry := range entries {
-				if !entry.IsDir() && strings.HasPrefix(entry.Name(), "sha256-") {
-					s.legacy.Store(true)
-					return
-				}
-			}
-			if err != nil {
-				return
-			}
-		}
-	})
-
-	return s.legacy.Load()
-}
-
 func (s *Storage) blobPath(ref hash.Hash) string {
 	return filepath.Join(s.path, hex.EncodeToString(ref[:1]), ref.String())
-}
-
-func (s *Storage) legacyPath(ref hash.Hash) string {
-	return filepath.Join(s.path, ref.String())
 }
 
 func (s *Storage) ensureDir(ref hash.Hash) error {
@@ -245,7 +163,9 @@ func (s *Storage) List(ctx context.Context) iter.Seq2[hash.Hash, error] {
 				return err
 			}
 
-			if d.IsDir() || strings.HasPrefix(d.Name(), tmpPrefix) {
+			// blobs only live inside shard folders; temp files and anything
+			// else directly under the storage path are not blobs
+			if d.IsDir() || filepath.Dir(path) == filepath.Clean(s.path) {
 				return nil
 			}
 
