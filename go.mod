@@ -1,6 +1,6 @@
 module ella.to/blob
 
-go 1.25.0
+go 1.27
 
 require (
 	ella.to/crypto v0.0.3
