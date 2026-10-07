@@ -58,7 +58,7 @@ func TestLocalStorage_Put(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			tmpDir := t.TempDir()
 			storage := NewStorage(WithPath(tmpDir))
-			ctx := context.Background()
+			ctx := t.Context()
 
 			ref, size, err := storage.Put(ctx, bytes.NewReader(tt.data))
 
@@ -84,7 +84,7 @@ func TestLocalStorage_Put(t *testing.T) {
 func TestLocalStorage_Get(t *testing.T) {
 	tmpDir := t.TempDir()
 	storage := NewStorage(WithPath(tmpDir))
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Put some data
 	testData := []byte("test data for retrieval")
@@ -117,7 +117,7 @@ func TestLocalStorage_Get(t *testing.T) {
 func TestLocalStorage_List(t *testing.T) {
 	tmpDir := t.TempDir()
 	storage := NewStorage(WithPath(tmpDir))
-	ctx := context.Background()
+	ctx := t.Context()
 
 	t.Run("empty storage", func(t *testing.T) {
 		count := 0
@@ -134,7 +134,7 @@ func TestLocalStorage_List(t *testing.T) {
 	t.Run("multiple items", func(t *testing.T) {
 		// Add multiple items
 		refs := make(map[string]bool)
-		for i := 0; i < 10; i++ {
+		for i := range 10 {
 			data := []byte{byte(i)}
 			ref, _, err := storage.Put(ctx, bytes.NewReader(data))
 			require.NoError(t, err)
@@ -160,7 +160,7 @@ func TestLocalStorage_List(t *testing.T) {
 func TestLocalStorage_PutIdempotent(t *testing.T) {
 	tmpDir := t.TempDir()
 	storage := NewStorage(WithPath(tmpDir))
-	ctx := context.Background()
+	ctx := t.Context()
 
 	testData := []byte("idempotent test")
 
@@ -190,7 +190,7 @@ func TestLocalStorage_PutIdempotent(t *testing.T) {
 func TestLocalStorage_Concurrent(t *testing.T) {
 	tmpDir := t.TempDir()
 	storage := NewStorage(WithPath(tmpDir))
-	ctx := context.Background()
+	ctx := t.Context()
 
 	const numGoroutines = 50
 	const numOperations = 5
@@ -201,13 +201,11 @@ func TestLocalStorage_Concurrent(t *testing.T) {
 	errors := make([]error, 0)
 
 	// Concurrent writes
-	for i := 0; i < numGoroutines; i++ {
-		wg.Add(1)
-		go func(id int) {
-			defer wg.Done()
-			for j := 0; j < numOperations; j++ {
+	for id := range numGoroutines {
+		wg.Go(func() {
+			for j := range numOperations {
 				// Create unique data for each operation
-				data := []byte(fmt.Sprintf("data-%d-%d", id, j))
+				data := fmt.Appendf(nil, "data-%d-%d", id, j)
 				ref, _, err := storage.Put(ctx, bytes.NewReader(data))
 				mu.Lock()
 				if err != nil {
@@ -217,7 +215,7 @@ func TestLocalStorage_Concurrent(t *testing.T) {
 				}
 				mu.Unlock()
 			}
-		}(i)
+		})
 	}
 
 	wg.Wait()
@@ -240,14 +238,14 @@ func TestLocalStorage_Concurrent(t *testing.T) {
 func TestLocalStorage_GetMultipleTimes(t *testing.T) {
 	tmpDir := t.TempDir()
 	storage := NewStorage(WithPath(tmpDir))
-	ctx := context.Background()
+	ctx := t.Context()
 
 	testData := []byte("test data for multiple reads")
 	ref, _, err := storage.Put(ctx, bytes.NewReader(testData))
 	require.NoError(t, err)
 
 	// Read the same data multiple times
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		rc, err := storage.Get(ctx, ref)
 		require.NoError(t, err)
 
@@ -264,13 +262,13 @@ func TestLocalStorage_ContextCancellation(t *testing.T) {
 
 	t.Run("cancelled context on List", func(t *testing.T) {
 		// Add some data first
-		ctx := context.Background()
+		ctx := t.Context()
 		for i := range 5 {
 			_, _, _ = storage.Put(ctx, bytes.NewReader([]byte{byte(i)}))
 		}
 
 		// Now try to list with cancelled context
-		cancelCtx, cancel := context.WithCancel(context.Background())
+		cancelCtx, cancel := context.WithCancel(t.Context())
 		cancel()
 
 		count := 0
@@ -290,7 +288,7 @@ func TestLocalStorage_ContextCancellation(t *testing.T) {
 func TestLocalStorage_TempFileCleanup(t *testing.T) {
 	tmpDir := t.TempDir()
 	storage := NewStorage(WithPath(tmpDir))
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Test that empty data doesn't leave temp files
 	_, _, err := storage.Put(ctx, bytes.NewReader([]byte{}))
@@ -309,7 +307,7 @@ func TestLocalStorage_TempFileCleanup(t *testing.T) {
 func TestLocalStorage_FileIntegrity(t *testing.T) {
 	tmpDir := t.TempDir()
 	storage := NewStorage(WithPath(tmpDir))
-	ctx := context.Background()
+	ctx := t.Context()
 
 	testData := []byte("test data for integrity check")
 	ref, _, err := storage.Put(ctx, bytes.NewReader(testData))
@@ -334,7 +332,7 @@ func TestLocalStorage_FileIntegrity(t *testing.T) {
 func TestLocalStorage_EncryptedPutGet(t *testing.T) {
 	tmpDir := t.TempDir()
 	storage := NewStorage(WithPath(tmpDir), WithKey("my-secret-key"))
-	ctx := context.Background()
+	ctx := t.Context()
 
 	testData := []byte("sensitive local storage payload")
 	ref, _, err := storage.Put(ctx, bytes.NewReader(testData))
@@ -355,7 +353,7 @@ func TestLocalStorage_EncryptedPutGet(t *testing.T) {
 
 func TestLocalStorage_EncryptedShortReads(t *testing.T) {
 	storage := NewStorage(WithPath(t.TempDir()), WithKey("secret"))
-	ctx := context.Background()
+	ctx := t.Context()
 
 	data := bytes.Repeat([]byte("0123456789"), 1000)
 
@@ -376,7 +374,7 @@ func TestLocalStorage_EncryptedShortReads(t *testing.T) {
 
 func TestLocalStorage_ListEarlyBreak(t *testing.T) {
 	storage := NewStorage(WithPath(t.TempDir()))
-	ctx := context.Background()
+	ctx := t.Context()
 
 	for i := range 50 {
 		_, _, err := storage.Put(ctx, bytes.NewReader([]byte{byte(i)}))
@@ -407,7 +405,7 @@ func TestLocalStorage_ListEarlyBreak(t *testing.T) {
 
 func TestLocalStorage_Delete(t *testing.T) {
 	storage := NewStorage(WithPath(t.TempDir()))
-	ctx := context.Background()
+	ctx := t.Context()
 
 	ref, _, err := storage.Put(ctx, bytes.NewReader([]byte("hello")))
 	require.NoError(t, err)
@@ -422,7 +420,7 @@ func TestLocalStorage_Delete(t *testing.T) {
 func TestLocalStorage_Sharded(t *testing.T) {
 	tmpDir := t.TempDir()
 	storage := NewStorage(WithPath(tmpDir))
-	ctx := context.Background()
+	ctx := t.Context()
 
 	ref, _, err := storage.Put(ctx, bytes.NewReader([]byte("hello world")))
 	require.NoError(t, err)
@@ -435,7 +433,7 @@ func TestLocalStorage_Sharded(t *testing.T) {
 func TestLocalStorage_ListOnlyShardFolders(t *testing.T) {
 	tmpDir := t.TempDir()
 	storage := NewStorage(WithPath(tmpDir))
-	ctx := context.Background()
+	ctx := t.Context()
 
 	ref, _, err := storage.Put(ctx, bytes.NewReader([]byte("sharded")))
 	require.NoError(t, err)

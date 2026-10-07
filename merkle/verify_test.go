@@ -2,7 +2,6 @@ package merkle_test
 
 import (
 	"bytes"
-	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -26,7 +25,7 @@ func TestVerify_DetectsCorruptChunk(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		ctx := context.Background()
+		ctx := t.Context()
 		data := bytes.Repeat([]byte("abcdefgh"), 4096)
 		ref, _, err := m.Put(ctx, bytes.NewReader(data))
 		require.NoError(t, err)

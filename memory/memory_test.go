@@ -52,7 +52,7 @@ func TestMemoryStorage_Put(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			storage := New()
-			ctx := context.Background()
+			ctx := t.Context()
 
 			ref, size, err := storage.Put(ctx, bytes.NewReader(tt.data))
 
@@ -72,7 +72,7 @@ func TestMemoryStorage_Put(t *testing.T) {
 
 func TestMemoryStorage_Get(t *testing.T) {
 	storage := New()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Put some data
 	testData := []byte("test data for retrieval")
@@ -100,7 +100,7 @@ func TestMemoryStorage_Get(t *testing.T) {
 
 func TestMemoryStorage_List(t *testing.T) {
 	storage := New()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	t.Run("empty storage", func(t *testing.T) {
 		count := 0
@@ -118,7 +118,7 @@ func TestMemoryStorage_List(t *testing.T) {
 	t.Run("multiple items", func(t *testing.T) {
 		// Add multiple items
 		refs := make(map[string]bool)
-		for i := 0; i < 10; i++ {
+		for i := range 10 {
 			data := []byte{byte(i)}
 			ref, _, err := storage.Put(ctx, bytes.NewReader(data))
 			require.NoError(t, err)
@@ -142,7 +142,7 @@ func TestMemoryStorage_List(t *testing.T) {
 
 func TestMemoryStorage_PutIdempotent(t *testing.T) {
 	storage := New()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	testData := []byte("idempotent test")
 
@@ -160,7 +160,7 @@ func TestMemoryStorage_PutIdempotent(t *testing.T) {
 
 func TestMemoryStorage_Concurrent(t *testing.T) {
 	storage := New()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	const numGoroutines = 100
 	const numOperations = 10
@@ -170,13 +170,11 @@ func TestMemoryStorage_Concurrent(t *testing.T) {
 	refs := make([][]byte, 0, numGoroutines*numOperations)
 
 	// Concurrent writes
-	for i := 0; i < numGoroutines; i++ {
-		wg.Add(1)
-		go func(id int) {
-			defer wg.Done()
-			for j := 0; j < numOperations; j++ {
+	for id := range numGoroutines {
+		wg.Go(func() {
+			for j := range numOperations {
 				// Create unique data for each operation to get unique hashes
-				data := []byte(fmt.Sprintf("data-%d-%d", id, j))
+				data := fmt.Appendf(nil, "data-%d-%d", id, j)
 				ref, _, err := storage.Put(ctx, bytes.NewReader(data))
 				assert.NoError(t, err)
 				if err == nil {
@@ -185,7 +183,7 @@ func TestMemoryStorage_Concurrent(t *testing.T) {
 					mu.Unlock()
 				}
 			}
-		}(i)
+		})
 	}
 
 	wg.Wait()
@@ -202,14 +200,14 @@ func TestMemoryStorage_Concurrent(t *testing.T) {
 
 func TestMemoryStorage_GetMultipleTimes(t *testing.T) {
 	storage := New()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	testData := []byte("test data for multiple reads")
 	ref, _, err := storage.Put(ctx, bytes.NewReader(testData))
 	require.NoError(t, err)
 
 	// Read the same data multiple times
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		rc, err := storage.Get(ctx, ref)
 		require.NoError(t, err)
 
@@ -224,7 +222,7 @@ func TestMemoryStorage_ContextCancellation(t *testing.T) {
 	storage := New()
 
 	t.Run("cancelled context on Put", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		cancel() // Cancel immediately
 
 		data := []byte("test data")
@@ -236,13 +234,13 @@ func TestMemoryStorage_ContextCancellation(t *testing.T) {
 
 	t.Run("cancelled context on List", func(t *testing.T) {
 		// Add some data first
-		ctx := context.Background()
-		for i := 0; i < 5; i++ {
+		ctx := t.Context()
+		for i := range 5 {
 			storage.Put(ctx, bytes.NewReader([]byte{byte(i)}))
 		}
 
 		// Now try to list with cancelled context
-		cancelCtx, cancel := context.WithCancel(context.Background())
+		cancelCtx, cancel := context.WithCancel(t.Context())
 		cancel()
 
 		count := 0
@@ -257,7 +255,7 @@ func TestMemoryStorage_ContextCancellation(t *testing.T) {
 
 func TestMemoryStorage_Delete(t *testing.T) {
 	storage := New()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	ref, _, err := storage.Put(ctx, bytes.NewReader([]byte("hello")))
 	require.NoError(t, err)

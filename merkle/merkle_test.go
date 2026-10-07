@@ -2,7 +2,6 @@ package merkle_test
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"io"
 	"iter"
@@ -39,12 +38,12 @@ func TestBasicMerkle(t *testing.T) {
 
 	content := []byte("hello world")
 
-	root, n, err := merkleStorage.Put(context.Background(), bytes.NewReader(content))
+	root, n, err := merkleStorage.Put(t.Context(), bytes.NewReader(content))
 	assert.NoError(t, err)
 	assert.Equal(t, int64(11), n)
 	assert.Equal(t, "sha256-931c1cc080775fbae890bbe06248c20866db7209e50e699c37c5e64c6770b28a", root.String())
 
-	next, cancel := iter.Pull2(memoryStorage.List(context.Background()))
+	next, cancel := iter.Pull2(memoryStorage.List(t.Context()))
 	defer cancel()
 
 	ref1, err, ok := next()
@@ -62,7 +61,7 @@ func TestBasicMerkle(t *testing.T) {
 	assert.ErrorIs(t, err, io.EOF)
 	assert.Nil(t, ref3)
 
-	rc, err := merkleStorage.Get(context.Background(), root)
+	rc, err := merkleStorage.Get(t.Context(), root)
 	assert.NoError(t, err)
 	defer rc.Close()
 
@@ -70,7 +69,7 @@ func TestBasicMerkle(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, content, b)
 
-	err = merkleStorage.Verify(context.Background(), root)
+	err = merkleStorage.Verify(t.Context(), root)
 	assert.NoError(t, err)
 }
 
@@ -93,11 +92,11 @@ func TestMerkleIterateOverChildren(t *testing.T) {
 
 	data := make([]byte, 10)
 
-	rootRef, size, err := merkleStorage.Put(context.Background(), bytes.NewReader(data))
+	rootRef, size, err := merkleStorage.Put(t.Context(), bytes.NewReader(data))
 	assert.NoError(t, err)
 	assert.Equal(t, int64(len(data)), size)
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	results := make([]string, 0)
 

@@ -2,8 +2,7 @@ package merkle_test
 
 import (
 	"bytes"
-	"context"
-	"math/rand"
+	"math/rand/v2"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -29,7 +28,7 @@ func TestCalcRoot_MatchesStoragePut(t *testing.T) {
 		{name: "last-partial-chunk", dataSize: 5000, chunkSize: 1024, childrenSize: 2},
 	}
 
-	rng := rand.New(rand.NewSource(42))
+	rng := rand.NewChaCha8([32]byte{42})
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -46,7 +45,7 @@ func TestCalcRoot_MatchesStoragePut(t *testing.T) {
 			)
 			require.NoError(t, err)
 
-			putRoot, putSize, err := m.Put(context.Background(), bytes.NewReader(data))
+			putRoot, putSize, err := m.Put(t.Context(), bytes.NewReader(data))
 			require.NoError(t, err)
 
 			calcRoot, calcSize, err := merkle.CalcRootSigned(bytes.NewReader(data), tc.chunkSize, tc.childrenSize, priv)

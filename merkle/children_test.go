@@ -2,7 +2,6 @@ package merkle_test
 
 import (
 	"bytes"
-	"context"
 	"crypto/rand"
 	"fmt"
 	"io"
@@ -19,7 +18,7 @@ func TestPutGet_AllChildrenSizes(t *testing.T) {
 	pub, priv := getTestKeys(t)
 
 	data := make([]byte, 10*1024+7)
-	_, _ = rand.Read(data)
+	rand.Read(data)
 
 	for children := 2; children <= merkle.MaxChildren; children++ {
 		t.Run(fmt.Sprintf("children=%d", children), func(t *testing.T) {
@@ -31,7 +30,7 @@ func TestPutGet_AllChildrenSizes(t *testing.T) {
 			)
 			require.NoError(t, err)
 
-			ctx := context.Background()
+			ctx := t.Context()
 			ref, _, err := m.Put(ctx, bytes.NewReader(data))
 			require.NoError(t, err)
 

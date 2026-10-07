@@ -2,7 +2,6 @@ package merkle_test
 
 import (
 	"bytes"
-	"context"
 	"crypto/rand"
 	"errors"
 	"fmt"
@@ -21,7 +20,7 @@ func TestPut_ConcurrencyMatchesSequential(t *testing.T) {
 
 	for _, size := range []int{1, 999, 1000, 1001, 33_333} {
 		data := make([]byte, size)
-		_, _ = rand.Read(data)
+		rand.Read(data)
 
 		want, _, err := merkle.CalcRootSigned(bytes.NewReader(data), 1000, 3, priv)
 		require.NoError(t, err)
@@ -37,7 +36,7 @@ func TestPut_ConcurrencyMatchesSequential(t *testing.T) {
 				)
 				require.NoError(t, err)
 
-				ctx := context.Background()
+				ctx := t.Context()
 				ref, n, err := m.Put(ctx, iotest.HalfReader(bytes.NewReader(data)))
 				require.NoError(t, err)
 				require.Equal(t, int64(size), n)
@@ -67,6 +66,6 @@ func TestPut_ConcurrencyReadError(t *testing.T) {
 	boom := errors.New("boom")
 	r := io.MultiReader(bytes.NewReader(make([]byte, 100)), iotest.ErrReader(boom))
 
-	_, _, err = m.Put(context.Background(), r)
+	_, _, err = m.Put(t.Context(), r)
 	require.ErrorIs(t, err, boom)
 }

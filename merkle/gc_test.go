@@ -2,7 +2,6 @@ package merkle_test
 
 import (
 	"bytes"
-	"context"
 	"crypto/rand"
 	"io"
 	"sync"
@@ -29,13 +28,13 @@ func newGCStorage(t *testing.T) (*merkle.Storage, *memory.Storage) {
 
 func randomBytes(size int) []byte {
 	b := make([]byte, size)
-	_, _ = rand.Read(b)
+	rand.Read(b)
 	return b
 }
 
 func countBlobs(t *testing.T, mem *memory.Storage) int {
 	count := 0
-	for ref, err := range mem.List(context.Background()) {
+	for ref, err := range mem.List(t.Context()) {
 		if err == io.EOF {
 			break
 		}
@@ -48,7 +47,7 @@ func countBlobs(t *testing.T, mem *memory.Storage) int {
 
 func listRoots(t *testing.T, m *merkle.Storage) []blob.Ref {
 	roots := make([]blob.Ref, 0)
-	for ref, err := range m.ListRootNodes(context.Background()) {
+	for ref, err := range m.ListRootNodes(t.Context()) {
 		require.NoError(t, err)
 		roots = append(roots, ref)
 	}
@@ -56,18 +55,18 @@ func listRoots(t *testing.T, m *merkle.Storage) []blob.Ref {
 }
 
 func requireContent(t *testing.T, m *merkle.Storage, ref blob.Ref, want []byte) {
-	rc, err := m.Get(context.Background(), ref)
+	rc, err := m.Get(t.Context(), ref)
 	require.NoError(t, err)
 	defer rc.Close()
 	got, err := io.ReadAll(rc)
 	require.NoError(t, err)
 	require.Equal(t, want, got)
-	require.NoError(t, m.Verify(context.Background(), ref))
+	require.NoError(t, m.Verify(t.Context(), ref))
 }
 
 func TestGC_KeepsSharedBlobs(t *testing.T) {
 	m, mem := newGCStorage(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	shared := randomBytes(1000) // 10 chunks shared by both trees
 	a := append(bytes.Clone(shared), randomBytes(500)...)
@@ -112,7 +111,7 @@ func TestGC_KeepsSharedBlobs(t *testing.T) {
 
 func TestGC_DeleteEverything(t *testing.T) {
 	m, mem := newGCStorage(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	roots := make([]blob.Ref, 0)
 	for range 5 {
@@ -139,7 +138,7 @@ func TestGC_DeleteEverything(t *testing.T) {
 
 func TestGC_PutRevivesDeletedRoot(t *testing.T) {
 	m, _ := newGCStorage(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	data := randomBytes(777)
 	root, _, err := m.Put(ctx, bytes.NewReader(data))
@@ -161,7 +160,7 @@ func TestGC_PutRevivesDeletedRoot(t *testing.T) {
 
 func TestGC_ResumesPartialSweep(t *testing.T) {
 	m, mem := newGCStorage(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	root, _, err := m.Put(ctx, bytes.NewReader(randomBytes(2000)))
 	require.NoError(t, err)
@@ -186,7 +185,7 @@ func TestGC_ResumesPartialSweep(t *testing.T) {
 
 func TestDelete_Errors(t *testing.T) {
 	m, mem := newGCStorage(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	root, _, err := m.Put(ctx, bytes.NewReader(randomBytes(1000)))
 	require.NoError(t, err)
@@ -214,13 +213,13 @@ func TestGC_RequiresDeleter(t *testing.T) {
 	m, err := merkle.New(merkle.WithStorage(noDelete{memory.New()}), merkle.WithKeys(pub, priv))
 	require.NoError(t, err)
 
-	_, err = m.GC(context.Background())
+	_, err = m.GC(t.Context())
 	require.ErrorIs(t, err, merkle.ErrDeleteNotSupported)
 }
 
 func TestGC_ConcurrentPut(t *testing.T) {
 	m, _ := newGCStorage(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	shared := randomBytes(1000)
 

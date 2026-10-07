@@ -26,9 +26,9 @@ func TestGet_Streaming(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	data := make([]byte, 10_000)
-	_, _ = rand.Read(data)
+	rand.Read(data)
 
 	ref, _, err := m.Put(ctx, bytes.NewReader(data))
 	require.NoError(t, err)
@@ -53,7 +53,7 @@ func TestGet_NotFound(t *testing.T) {
 	m, err := merkle.New(merkle.WithStorage(memory.New()), merkle.WithKeys(pub, priv))
 	require.NoError(t, err)
 
-	_, err = m.Get(context.Background(), make(blob.Ref, 32))
+	_, err = m.Get(t.Context(), make(blob.Ref, 32))
 	require.ErrorIs(t, err, blob.ErrNotFound)
 }
 
@@ -67,7 +67,7 @@ func TestGet_Canceled(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	ref, _, err := m.Put(ctx, bytes.NewReader(make([]byte, 10*1024)))
 	require.NoError(t, err)
 
@@ -89,7 +89,7 @@ func TestVerify_WrongKey(t *testing.T) {
 	m, err := merkle.New(merkle.WithStorage(mem), merkle.WithKeys(pub, priv))
 	require.NoError(t, err)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	ref, _, err := m.Put(ctx, bytes.NewReader([]byte("hello")))
 	require.NoError(t, err)
 
