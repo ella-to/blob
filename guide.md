@@ -64,43 +64,6 @@ are still readable; move them into folders once with:
 check(s.Migrate(ctx))
 ```
 
-### Pebble (single LSM database)
-
-```go
-package main
-
-import (
-	"bytes"
-	"context"
-	"io"
-
-	"ella.to/blob/pebble"
-)
-
-func main() {
-	ctx := context.Background()
-
-	s, err := pebble.Open("./data.db",
-		pebble.WithKey("my-secret"),    // optional: encrypt at rest
-		pebble.WithSync(true),          // optional: fsync every write
-		pebble.WithPieceSize(256*1024), // optional: value split size
-	)
-	check(err)
-	defer s.Close()
-
-	ref, _, err := s.Put(ctx, bytes.NewReader([]byte("hello world")))
-	check(err)
-
-	rc, err := s.Get(ctx, ref)
-	check(err)
-	defer rc.Close()
-	_, _ = io.ReadAll(rc)
-}
-```
-
-`Put` buffers the whole blob in memory (the key is the content hash), so put
-large files through the merkle layer, which splits them into chunks.
-
 ### Memory
 
 Same API, nothing touches disk. Handy for tests.
@@ -174,7 +137,7 @@ root, size, err := merkle.CalcRootSigned(f, 4*1024*1024, 2, priv)
 `Delete` writes a signed tombstone for a root. The tree disappears from
 `ListRootNodes` right away but stays readable; `GC` then removes every chunk
 and node that no live tree shares. The backend must implement `blob.Deleter`
-(local, pebble and memory do).
+(local and memory do).
 
 ```go
 package main
@@ -232,24 +195,8 @@ func check(err error) {
   Don't run it while another process writes to the same backend.
 - An interrupted `GC` is finished by the next run.
 
-## Choosing a backend
-
-M2 Pro, `go test -bench . ./bench/`:
-
-| op               | local    | pebble   |
-|------------------|----------|----------|
-| Put 1KB          | 140µs    | 8µs      |
-| Get 1KB          | 13.7µs   | 0.9µs    |
-| Put 4KB parallel | 18 MB/s  | 154 MB/s |
-| Get 4KB parallel | 0.3 GB/s | 5.5 GB/s |
-| Put 1MB          | 0.8ms    | 8.8ms    |
-| Get 1MB          | 132µs    | 200µs    |
-
-Many small blobs or lots of traffic: pebble. Big chunks: local.
-
 ## Benchmarks
 
 ```bash
-go test -run '^$' -bench . -benchmem ./bench/   # local vs pebble
 go test -run '^$' -bench . -benchmem ./merkle/ ./local/
 ```

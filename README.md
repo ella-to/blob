@@ -24,7 +24,7 @@ go get ella.to/blob@v0.0.2
 
 ## Overview
 
-Blob provides a simple interface for storing and retrieving data by its SHA-256 hash. Data goes in, you get a reference back, and you can always retrieve the exact same data using that reference. The library ships with three storage backends (local filesystem, Pebble and in-memory) and a Merkle tree layer for handling large files with integrity verification, deletion and garbage collection.
+Blob provides a simple interface for storing and retrieving data by its SHA-256 hash. Data goes in, you get a reference back, and you can always retrieve the exact same data using that reference. The library ships with two storage backends (local filesystem and in-memory) and a Merkle tree layer for handling large files with integrity verification, deletion and garbage collection.
 
 See [guide.md](guide.md) for runnable examples.
 
@@ -104,17 +104,6 @@ for ref, err := range storage.List(ctx) {
     }
     fmt.Println(ref.String())
 }
-```
-
-## Pebble Storage
-
-The `pebble` sub-package keeps every blob in a single [Pebble](https://github.com/cockroachdb/pebble) database. It is much faster than `local` for small blobs and high request rates, slower for large sequential writes.
-
-```go
-import "ella.to/blob/pebble"
-
-storage, err := pebble.Open("/var/data/blobs.db", pebble.WithKey("my-secret-key"))
-defer storage.Close()
 ```
 
 ## In-Memory Storage
@@ -227,7 +216,7 @@ Node structure:
 
 ## Thread Safety
 
-`local.Storage`, `pebble.Storage` and `memory.Storage` are safe for concurrent use. The Merkle tree layer inherits thread safety from the underlying backend; `GC` blocks `Put` and `Delete` of the same `merkle.Storage` while it runs.
+Both `local.Storage` and `memory.Storage` are safe for concurrent use. The Merkle tree layer inherits thread safety from the underlying backend; `GC` blocks `Put` and `Delete` of the same `merkle.Storage` while it runs.
 
 ## License
 
