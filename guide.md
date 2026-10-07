@@ -57,12 +57,7 @@ func main() {
 ```
 
 Blobs live in `<path>/<first 2 hex chars of the hash>/<ref>`, so a folder holds
-at most ~1/256 of the blobs. Stores written by older versions (flat layout)
-are still readable; move them into folders once with:
-
-```go
-check(s.Migrate(ctx))
-```
+~1/256 of the blobs.
 
 ### Memory
 

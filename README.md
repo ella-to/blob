@@ -58,7 +58,7 @@ type Deleter interface {
 
 ## Local Storage
 
-The `local` sub-package stores blobs as files on disk, named by their hash, in a folder named after the first two hex characters of the hash (`<path>/b9/sha256-b94d27...`). It optionally encrypts content at rest. Stores using the older flat layout are still readable; `storage.Migrate(ctx)` moves them into folders.
+The `local` sub-package stores blobs as files on disk, named by their hash, in a folder named after the first two hex characters of the hash (`<path>/b9/sha256-b94d27...`). It optionally encrypts content at rest.
 
 ```go
 import "ella.to/blob/local"
