@@ -2,7 +2,6 @@ package merkle
 
 import (
 	"bytes"
-	"context"
 	"crypto/rand"
 	"io"
 	"testing"
@@ -58,9 +57,9 @@ func BenchmarkMerkleStorage_Put(b *testing.B) {
 				)
 				require.NoError(b, err)
 
-				ctx := context.Background()
+				ctx := b.Context()
 				data := make([]byte, s.size)
-				_, _ = rand.Read(data)
+				rand.Read(data)
 
 				b.ResetTimer()
 				b.SetBytes(int64(s.size))
@@ -102,9 +101,9 @@ func BenchmarkMerkleStorage_Get(b *testing.B) {
 			)
 			require.NoError(b, err)
 
-			ctx := context.Background()
+			ctx := b.Context()
 			data := make([]byte, s.size)
-			_, _ = rand.Read(data)
+			rand.Read(data)
 
 			ref, _, err := merkleStorage.Put(ctx, bytes.NewReader(data))
 			require.NoError(b, err)
@@ -151,9 +150,9 @@ func BenchmarkMerkleStorage_Verify(b *testing.B) {
 			)
 			require.NoError(b, err)
 
-			ctx := context.Background()
+			ctx := b.Context()
 			data := make([]byte, s.size)
-			_, _ = rand.Read(data)
+			rand.Read(data)
 
 			ref, _, err := merkleStorage.Put(ctx, bytes.NewReader(data))
 			require.NoError(b, err)
@@ -176,7 +175,7 @@ func BenchmarkMerkleStorage_ChildrenSize(b *testing.B) {
 
 	childrenSizes := []int{2, 3, 4}
 	data := make([]byte, 1*1024*1024) // 1MB
-	_, _ = rand.Read(data)
+	rand.Read(data)
 
 	for _, children := range childrenSizes {
 		b.Run("children="+string(rune(children+'0')), func(b *testing.B) {
@@ -189,12 +188,12 @@ func BenchmarkMerkleStorage_ChildrenSize(b *testing.B) {
 			)
 			require.NoError(b, err)
 
-			ctx := context.Background()
+			ctx := b.Context()
 
 			b.ResetTimer()
 			b.SetBytes(int64(len(data)))
 
-			for i := 0; i < b.N; i++ {
+			for b.Loop() {
 				_, _, err := merkleStorage.Put(ctx, bytes.NewReader(data))
 				if err != nil {
 					b.Fatal(err)
@@ -216,19 +215,19 @@ func BenchmarkMerkleStorage_ListRootNodes(b *testing.B) {
 	)
 	require.NoError(b, err)
 
-	ctx := context.Background()
+	ctx := b.Context()
 
 	// Create some root nodes
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		data := make([]byte, 1024)
-		_, _ = rand.Read(data)
+		rand.Read(data)
 		_, _, err := merkleStorage.Put(ctx, bytes.NewReader(data))
 		require.NoError(b, err)
 	}
 
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		count := 0
 		for range merkleStorage.ListRootNodes(ctx) {
 			count++
@@ -248,16 +247,16 @@ func BenchmarkMerkleStorage_ListRootChildrenNodes(b *testing.B) {
 	)
 	require.NoError(b, err)
 
-	ctx := context.Background()
+	ctx := b.Context()
 	data := make([]byte, 100*1024) // 100KB
-	_, _ = rand.Read(data)
+	rand.Read(data)
 
 	ref, _, err := merkleStorage.Put(ctx, bytes.NewReader(data))
 	require.NoError(b, err)
 
 	b.Run("dataOnly=false", func(b *testing.B) {
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			count := 0
 			for range merkleStorage.ListRootChildrenNodes(ctx, ref, false) {
 				count++
@@ -267,7 +266,7 @@ func BenchmarkMerkleStorage_ListRootChildrenNodes(b *testing.B) {
 
 	b.Run("dataOnly=true", func(b *testing.B) {
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			count := 0
 			for range merkleStorage.ListRootChildrenNodes(ctx, ref, true) {
 				count++
@@ -288,9 +287,9 @@ func BenchmarkMerkleStorage_ConcurrentPut(b *testing.B) {
 	)
 	require.NoError(b, err)
 
-	ctx := context.Background()
+	ctx := b.Context()
 	data := make([]byte, 10*1024) // 10KB
-	_, _ = rand.Read(data)
+	rand.Read(data)
 
 	b.ResetTimer()
 	b.SetBytes(int64(len(data)))
@@ -320,13 +319,13 @@ func BenchmarkCalcRoot(b *testing.B) {
 	for _, cfg := range configs {
 		b.Run(cfg.name, func(b *testing.B) {
 			data := make([]byte, cfg.size)
-			_, _ = rand.Read(data)
+			rand.Read(data)
 
 			b.ReportAllocs()
 			b.SetBytes(int64(len(data)))
 			b.ResetTimer()
 
-			for i := 0; i < b.N; i++ {
+			for b.Loop() {
 				_, _, err := CalcRoot(bytes.NewReader(data), cfg.chunkSize, cfg.childrenSize)
 				if err != nil {
 					b.Fatal(err)
@@ -353,13 +352,13 @@ func BenchmarkCalcRootSigned(b *testing.B) {
 	for _, cfg := range configs {
 		b.Run(cfg.name, func(b *testing.B) {
 			data := make([]byte, cfg.size)
-			_, _ = rand.Read(data)
+			rand.Read(data)
 
 			b.ReportAllocs()
 			b.SetBytes(int64(len(data)))
 			b.ResetTimer()
 
-			for i := 0; i < b.N; i++ {
+			for b.Loop() {
 				_, _, err := CalcRootSigned(bytes.NewReader(data), cfg.chunkSize, cfg.childrenSize, priv)
 				if err != nil {
 					b.Fatal(err)
@@ -372,10 +371,10 @@ func BenchmarkCalcRootSigned(b *testing.B) {
 // Benchmark GC of 50 deleted trees out of 100 sharing half of their chunks
 func BenchmarkMerkleStorage_GC(b *testing.B) {
 	pub, priv := getTestKeysBench(b)
-	ctx := context.Background()
+	ctx := b.Context()
 
 	shared := make([]byte, 64*1024)
-	_, _ = rand.Read(shared)
+	rand.Read(shared)
 
 	for b.Loop() {
 		b.StopTimer()
@@ -389,7 +388,7 @@ func BenchmarkMerkleStorage_GC(b *testing.B) {
 		for i := range 100 {
 			data := make([]byte, 128*1024)
 			copy(data, shared)
-			_, _ = rand.Read(data[len(shared):])
+			rand.Read(data[len(shared):])
 
 			root, _, err := m.Put(ctx, bytes.NewReader(data))
 			require.NoError(b, err)

@@ -2,7 +2,6 @@ package merkle
 
 import (
 	"bytes"
-	"context"
 	"crypto/rand"
 	"fmt"
 	"io"
@@ -30,7 +29,7 @@ func BenchmarkMerkleLocal(b *testing.B) {
 
 	for _, s := range sizes {
 		data := make([]byte, s.size)
-		_, _ = rand.Read(data)
+		rand.Read(data)
 
 		newStorage := func(b *testing.B) *Storage {
 			m, err := New(
@@ -44,7 +43,7 @@ func BenchmarkMerkleLocal(b *testing.B) {
 
 		b.Run("Put/"+s.name, func(b *testing.B) {
 			m := newStorage(b)
-			ctx := context.Background()
+			ctx := b.Context()
 
 			b.SetBytes(int64(s.size))
 			for b.Loop() {
@@ -56,7 +55,7 @@ func BenchmarkMerkleLocal(b *testing.B) {
 
 		b.Run("Get/"+s.name, func(b *testing.B) {
 			m := newStorage(b)
-			ctx := context.Background()
+			ctx := b.Context()
 
 			ref, _, err := m.Put(ctx, bytes.NewReader(data))
 			require.NoError(b, err)
@@ -76,7 +75,7 @@ func BenchmarkMerkleLocal(b *testing.B) {
 
 		b.Run("Verify/"+s.name, func(b *testing.B) {
 			m := newStorage(b)
-			ctx := context.Background()
+			ctx := b.Context()
 
 			ref, _, err := m.Put(ctx, bytes.NewReader(data))
 			require.NoError(b, err)
@@ -95,7 +94,7 @@ func BenchmarkMerkleLocal_PutConcurrency(b *testing.B) {
 	pub, priv := getTestKeysBench(b)
 
 	data := make([]byte, 64*1024*1024)
-	_, _ = rand.Read(data)
+	rand.Read(data)
 
 	for _, encrypted := range []bool{false, true} {
 		for _, c := range []int{1, 2, 4, 8} {
@@ -112,7 +111,7 @@ func BenchmarkMerkleLocal_PutConcurrency(b *testing.B) {
 					WithConcurrency(c),
 				)
 				require.NoError(b, err)
-				ctx := context.Background()
+				ctx := b.Context()
 
 				b.SetBytes(int64(len(data)))
 				for b.Loop() {
@@ -129,7 +128,7 @@ func BenchmarkMerkleLocal_VerifyConcurrency(b *testing.B) {
 	pub, priv := getTestKeysBench(b)
 
 	data := make([]byte, 64*1024*1024)
-	_, _ = rand.Read(data)
+	rand.Read(data)
 
 	for _, c := range []int{1, 4} {
 		b.Run(fmt.Sprintf("c=%d", c), func(b *testing.B) {
@@ -140,7 +139,7 @@ func BenchmarkMerkleLocal_VerifyConcurrency(b *testing.B) {
 				WithConcurrency(c),
 			)
 			require.NoError(b, err)
-			ctx := context.Background()
+			ctx := b.Context()
 
 			ref, _, err := m.Put(ctx, bytes.NewReader(data))
 			require.NoError(b, err)

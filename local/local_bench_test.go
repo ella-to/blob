@@ -2,10 +2,8 @@ package local
 
 import (
 	"bytes"
-	"context"
 	"crypto/rand"
 	"io"
-	"os"
 	"testing"
 
 	"ella.to/hash"
@@ -28,14 +26,13 @@ func BenchmarkLocalStorage_Put(b *testing.B) {
 		b.Run(s.name, func(b *testing.B) {
 			tmpDir := b.TempDir()
 			storage := NewStorage(WithPath(tmpDir))
-			ctx := context.Background()
+			ctx := b.Context()
 			data := make([]byte, s.size)
-			_, _ = rand.Read(data)
+			rand.Read(data)
 
-			b.ResetTimer()
 			b.SetBytes(int64(s.size))
 
-			for i := 0; i < b.N; i++ {
+			for b.Loop() {
 				_, _, err := storage.Put(ctx, bytes.NewReader(data))
 				if err != nil {
 					b.Fatal(err)
@@ -62,19 +59,18 @@ func BenchmarkLocalStorage_Get(b *testing.B) {
 		b.Run(s.name, func(b *testing.B) {
 			tmpDir := b.TempDir()
 			storage := NewStorage(WithPath(tmpDir))
-			ctx := context.Background()
+			ctx := b.Context()
 			data := make([]byte, s.size)
-			_, _ = rand.Read(data)
+			rand.Read(data)
 
 			ref, _, err := storage.Put(ctx, bytes.NewReader(data))
 			if err != nil {
 				b.Fatal(err)
 			}
 
-			b.ResetTimer()
 			b.SetBytes(int64(s.size))
 
-			for i := 0; i < b.N; i++ {
+			for b.Loop() {
 				rc, err := storage.Get(ctx, ref)
 				if err != nil {
 					b.Fatal(err)
@@ -103,21 +99,19 @@ func BenchmarkLocalStorage_List(b *testing.B) {
 		b.Run(c.name, func(b *testing.B) {
 			tmpDir := b.TempDir()
 			storage := NewStorage(WithPath(tmpDir))
-			ctx := context.Background()
+			ctx := b.Context()
 
 			// Pre-populate storage
-			for i := 0; i < c.count; i++ {
+			for range c.count {
 				data := make([]byte, 100)
-				_, _ = rand.Read(data)
+				rand.Read(data)
 				_, _, err := storage.Put(ctx, bytes.NewReader(data))
 				if err != nil {
 					b.Fatal(err)
 				}
 			}
 
-			b.ResetTimer()
-
-			for i := 0; i < b.N; i++ {
+			for b.Loop() {
 				count := 0
 				for ref, err := range storage.List(ctx) {
 					if ref == nil && err == nil {
@@ -137,9 +131,9 @@ func BenchmarkLocalStorage_List(b *testing.B) {
 func BenchmarkLocalStorage_ConcurrentPut(b *testing.B) {
 	tmpDir := b.TempDir()
 	storage := NewStorage(WithPath(tmpDir))
-	ctx := context.Background()
+	ctx := b.Context()
 	data := make([]byte, 1024)
-	_, _ = rand.Read(data)
+	rand.Read(data)
 
 	b.ResetTimer()
 	b.SetBytes(1024)
@@ -158,9 +152,9 @@ func BenchmarkLocalStorage_ConcurrentPut(b *testing.B) {
 func BenchmarkLocalStorage_ConcurrentGet(b *testing.B) {
 	tmpDir := b.TempDir()
 	storage := NewStorage(WithPath(tmpDir))
-	ctx := context.Background()
+	ctx := b.Context()
 	data := make([]byte, 1024)
-	_, _ = rand.Read(data)
+	rand.Read(data)
 
 	ref, _, err := storage.Put(ctx, bytes.NewReader(data))
 	if err != nil {
@@ -188,21 +182,23 @@ func BenchmarkLocalStorage_ConcurrentGet(b *testing.B) {
 func BenchmarkLocalStorage_FileSystemOverhead(b *testing.B) {
 	tmpDir := b.TempDir()
 	storage := NewStorage(WithPath(tmpDir))
-	ctx := context.Background()
+	ctx := b.Context()
 
 	b.Run("CreateFile", func(b *testing.B) {
 		data := []byte("test")
 		b.ResetTimer()
 
-		for i := 0; i < b.N; i++ {
+		i := 0
+		for b.Loop() {
 			ref, _, err := storage.Put(ctx, bytes.NewReader(data))
 			if err != nil {
 				b.Fatal(err)
 			}
 			// Clean up to avoid filling disk
 			if i%100 == 0 {
-				os.Remove(tmpDir + "/" + ref.String())
+				_ = storage.Delete(ctx, ref)
 			}
+			i++
 		}
 	})
 }
@@ -220,11 +216,11 @@ func BenchmarkLocalStorage_Encrypted(b *testing.B) {
 
 	for _, s := range sizes {
 		data := make([]byte, s.size)
-		_, _ = rand.Read(data)
+		rand.Read(data)
 
 		b.Run("Put/"+s.name, func(b *testing.B) {
 			storage := NewStorage(WithPath(b.TempDir()), WithKey("secret"))
-			ctx := context.Background()
+			ctx := b.Context()
 
 			b.SetBytes(int64(s.size))
 			for b.Loop() {
@@ -236,7 +232,7 @@ func BenchmarkLocalStorage_Encrypted(b *testing.B) {
 
 		b.Run("Get/"+s.name, func(b *testing.B) {
 			storage := NewStorage(WithPath(b.TempDir()), WithKey("secret"))
-			ctx := context.Background()
+			ctx := b.Context()
 
 			ref, _, err := storage.Put(ctx, bytes.NewReader(data))
 			if err != nil {
@@ -263,12 +259,12 @@ func BenchmarkLocalStorage_ManyFiles(b *testing.B) {
 	const count = 50_000
 
 	storage := NewStorage(WithPath(b.TempDir()))
-	ctx := context.Background()
+	ctx := b.Context()
 
 	refs := make([]hash.Hash, count)
 	for i := range refs {
 		data := make([]byte, 64)
-		_, _ = rand.Read(data)
+		rand.Read(data)
 		ref, _, err := storage.Put(ctx, bytes.NewReader(data))
 		if err != nil {
 			b.Fatal(err)
@@ -294,7 +290,7 @@ func BenchmarkLocalStorage_ManyFiles(b *testing.B) {
 	b.Run("Put", func(b *testing.B) {
 		data := make([]byte, 64)
 		for b.Loop() {
-			_, _ = rand.Read(data)
+			rand.Read(data)
 			if _, _, err := storage.Put(ctx, bytes.NewReader(data)); err != nil {
 				b.Fatal(err)
 			}

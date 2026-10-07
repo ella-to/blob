@@ -2,7 +2,6 @@ package memory
 
 import (
 	"bytes"
-	"context"
 	"crypto/rand"
 	"testing"
 )
@@ -23,14 +22,13 @@ func BenchmarkMemoryStorage_Put(b *testing.B) {
 	for _, s := range sizes {
 		b.Run(s.name, func(b *testing.B) {
 			storage := New()
-			ctx := context.Background()
+			ctx := b.Context()
 			data := make([]byte, s.size)
 			rand.Read(data)
 
-			b.ResetTimer()
 			b.SetBytes(int64(s.size))
 
-			for i := 0; i < b.N; i++ {
+			for b.Loop() {
 				_, _, err := storage.Put(ctx, bytes.NewReader(data))
 				if err != nil {
 					b.Fatal(err)
@@ -56,7 +54,7 @@ func BenchmarkMemoryStorage_Get(b *testing.B) {
 	for _, s := range sizes {
 		b.Run(s.name, func(b *testing.B) {
 			storage := New()
-			ctx := context.Background()
+			ctx := b.Context()
 			data := make([]byte, s.size)
 			rand.Read(data)
 
@@ -65,10 +63,9 @@ func BenchmarkMemoryStorage_Get(b *testing.B) {
 				b.Fatal(err)
 			}
 
-			b.ResetTimer()
 			b.SetBytes(int64(s.size))
 
-			for i := 0; i < b.N; i++ {
+			for b.Loop() {
 				rc, err := storage.Get(ctx, ref)
 				if err != nil {
 					b.Fatal(err)
@@ -93,10 +90,10 @@ func BenchmarkMemoryStorage_List(b *testing.B) {
 	for _, c := range counts {
 		b.Run(c.name, func(b *testing.B) {
 			storage := New()
-			ctx := context.Background()
+			ctx := b.Context()
 
 			// Pre-populate storage
-			for i := 0; i < c.count; i++ {
+			for range c.count {
 				data := make([]byte, 100)
 				rand.Read(data)
 				_, _, err := storage.Put(ctx, bytes.NewReader(data))
@@ -105,9 +102,7 @@ func BenchmarkMemoryStorage_List(b *testing.B) {
 				}
 			}
 
-			b.ResetTimer()
-
-			for i := 0; i < b.N; i++ {
+			for b.Loop() {
 				count := 0
 				for range storage.List(ctx) {
 					count++
@@ -120,7 +115,7 @@ func BenchmarkMemoryStorage_List(b *testing.B) {
 // Benchmark concurrent Put operations
 func BenchmarkMemoryStorage_ConcurrentPut(b *testing.B) {
 	storage := New()
-	ctx := context.Background()
+	ctx := b.Context()
 	data := make([]byte, 1024)
 	rand.Read(data)
 
@@ -140,7 +135,7 @@ func BenchmarkMemoryStorage_ConcurrentPut(b *testing.B) {
 // Benchmark concurrent Get operations
 func BenchmarkMemoryStorage_ConcurrentGet(b *testing.B) {
 	storage := New()
-	ctx := context.Background()
+	ctx := b.Context()
 	data := make([]byte, 1024)
 	rand.Read(data)
 
